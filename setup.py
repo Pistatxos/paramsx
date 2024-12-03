@@ -1,5 +1,6 @@
 from setuptools import setup, find_packages
 from setuptools.command.install import install
+from distutils import log
 import os
 import sys
 import shutil
@@ -35,11 +36,20 @@ class CustomInstallCommand(install):
             if scripts_dir not in path_env:
                 if system == "Windows":
                     os.system(f'setx PATH "{path_env};{scripts_dir}"')
-                    print(f"Se agregó {scripts_dir} al PATH. Reinicia tu terminal para que los cambios surtan efecto.")
+                    log.info(f"Se agregó {scripts_dir} al PATH. Reinicia tu terminal para que los cambios surtan efecto.")
                 elif system in ["Darwin", "Linux"]:
                     shell_config = "~/.zshrc" if system == "Darwin" else "~/.bashrc"
                     self._add_to_shell_config(shell_config, scripts_dir)
 
+        else:
+            log.warning(
+                        f"No se pudo agregar {scripts_dir} al PATH. "
+                        f"Añádelo manualmente para poder ejecutar paramsx sin complicaciones.\n"
+                        f"En Windows: Ve al 'Panel de control', busca 'variables de entorno', "
+                        f"y edita las 'Variables de usuario' para agregar este path.\n"
+                        f"En Linux/Mac: Edita tu archivo de shell (~/.bashrc o ~/.zshrc) y agrega:\n"
+                        f'export PATH="{scripts_dir}:$PATH".'
+                    )
 
     def _add_to_shell_config(self, shell_config, scripts_dir):
         """Añadir el directorio de scripts al archivo de configuración del shell."""
@@ -50,13 +60,13 @@ class CustomInstallCommand(install):
             if os.path.exists(shell_config):
                 with open(shell_config, "a") as f:
                     f.write(f"\n{export_line}\n")
-                print(f"Se agregó {scripts_dir} a {shell_config}.")
+                log.info(f"Se agregó {scripts_dir} a {shell_config}.")
             else:
                 with open(shell_config, "w") as f:
                     f.write(f"{export_line}\n")
-                print(f"Se creó {shell_config} y se agregó {scripts_dir}.")
+                log.info(f"Se creó {shell_config} y se agregó {scripts_dir}.")
         except Exception as e:
-            print(f"Error al actualizar el archivo de shell {shell_config}: {e}")
+            log.warning(f"Error al actualizar el archivo de shell {shell_config}: {e}")
 
 
 ## Leer Readme para asociarlo a Pypi
@@ -66,7 +76,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # Configuración del paquete
 setup(
     name="paramsx",
-    version="1.1.1",
+    version="1.1.2",
     packages=find_packages(),
     include_package_data=True,
     package_data={

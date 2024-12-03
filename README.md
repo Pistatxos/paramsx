@@ -22,6 +22,29 @@ Este enfoque te permitirá integrar ParamsX de manera más efectiva en tu flujo 
 
 ```pip install paramx```
 
+#### Configuración manual del PATH
+En algunos sistemas, especialmente en Windows, muchas de las veces es por las restricciones que ponen las empresas para proteger los equipos, es posible que durante la instalación el PATH no se configure automáticamente. Si esto ocurre, deberás configurarlo manualmente. 
+- Configuración del PATH en Windows:
+Ve al Panel de control.
+Busca y selecciona la opción Editar las variables de usuario para nombreUsuario.
+Añade una nueva entrada con el siguiente valor:
+```C:\Users\<tu_usuario>\AppData\Roaming\Python\Python<versión>\Scripts```
+Nota: Reemplaza <tu_usuario> por tu nombre de usuario y <versión> por la versión de Python instalada, como 312 para Python 3.12.
+Haz clic en Aceptar en todas las ventanas y reinicia tu terminal.
+
+- Configuración del PATH en Linux/MacOS:
+Abre tu terminal y edita el archivo de configuración de tu shell:
+Para bash: ```~/.bashrc```
+Para zsh: ```~/.zshrc```
+Añade la siguiente línea al final del archivo:
+```export PATH="$HOME/.local/bin:$PATH"```
+Guarda los cambios y recarga la configuración del shell ejecutando:
+```source ~/.bashrc```  # Para bash
+```source ~/.zshrc```   # Para zsh
+
+Una vez instalado, verifica que el comando paramsx esté disponible ejecutando:
+```paramsx --help```
+
 ### Configuración inicial
 Una vez instalado el paquete, debes configurar ParamsX antes de usarlo. Para ello, ejecuta el siguiente comando:
 ``` paramsx configure ```
