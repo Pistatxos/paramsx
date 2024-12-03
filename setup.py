@@ -59,10 +59,14 @@ class CustomInstallCommand(install):
             print(f"Error al actualizar el archivo de shell {shell_config}: {e}")
 
 
+## Leer Readme para asociarlo a Pypi
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 # Configuración del paquete
 setup(
     name="paramsx",
-    version="1.1.0",
+    version="1.1.1",
     packages=find_packages(),
     include_package_data=True,
     package_data={
@@ -81,6 +85,8 @@ setup(
         "install": CustomInstallCommand,
     },
     description="Librería para gestionar y respaldar parámetros de AWS SSM de manera sencilla y eficiente.",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     author="Mariox",
     author_email="info@tomonota.net",
     url="https://github.com/pistatxos/paramsx",
