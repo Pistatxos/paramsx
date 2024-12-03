@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Distribución y construcción
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.whl
+
+# Archivos de configuración de entornos virtuales
+*.env
+*.venv
+env/
+venv/
+ENV/
+*.virtualenv
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+.idea/
+.vscode/
+.project
+*.log
+
+# Archivos relacionados con pytest y pruebas
+.pytest_cache/
+.coverage
+.cache/
+htmlcov/
+.tox/
+.nox/
+.junit/
+
+# Archivos de paquetes creados
+MANIFEST
+
+# Herramientas como Jupyter
+.ipynb_checkpoints/
+
+# Archivos relacionados con AWS
+*.pem
+*.key
+*.crt
+
+# Archivos sensibles o configuraciones locales
+.env
+*.ini
+*.cfg
+local_settings.py
+
+# Otros
+*.bak
+*.tmp
+logs/
+*.sqlite

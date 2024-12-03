@@ -1,0 +1,2 @@
+include paramsx/paramsx_config.py
+include paramsx/post_install.py
