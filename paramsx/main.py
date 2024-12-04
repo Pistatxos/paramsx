@@ -286,6 +286,10 @@ Comandos disponibles:
   paramsx configure      Crea el archivo de configuración inicial en ~/.xsoft/paramsx_config.py.
   paramsx --help         Muestra esta ayuda.
 
+Si necesitas más ayuda puedes leer el readme en GitHub o en Pypi:
+- https://github.com/Pistatxos/paramsx
+- https://pypi.org/project/paramsx/
+
 """
     print(help_text)
 

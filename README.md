@@ -1,63 +1,72 @@
 # ParamsX
 
-ParamsX es una librería diseñada para gestionar parámetros de AWS SSM de manera sencilla y eficiente. Con ella podrás:
-- Leer parámetros almacenados en AWS SSM.
-- Comparar y actualizar parámetros existentes.
-- Eliminar parámetros que ya no estén presentes en los archivos de configuración.
-- Crear respaldos para evitar pérdida de datos.
+ParamsX es una herramienta diseñada para gestionar y organizar parámetros de AWS SSM de manera sencilla y eficiente.
 
+### Estructura Recomendada
+Organiza los parámetros en AWS SSM con un esquema claro y ordenado:
+"/APP/nombreApp/tipoEntorno/dato"
 
-#### Consejos varios para tener un orden en los parámetros
-Para aprovechar al máximo ParamsX, te recomendamos estructurar los parámetros de AWS SSM siguiendo un esquema lógico y ordenado. Por ejemplo:
-- /APP/nombreApp/tipoEntorno/más datos...
+Ejemplo:
+/APP/gestorClientes/DEV/grupos
+/APP/gestorClientes/PROD/grupos
 
-Ventajas de usar esta estructura:
-- Claridad: Es más sencillo identificar a qué aplicación, entorno o componente pertenece cada parámetro.
-- Escalabilidad: Facilita el crecimiento de tu infraestructura manteniendo un orden consistente.
-- Gestión simplificada: Con ParamsX, puedes configurar listas específicas de parámetros basadas en estos prefijos, lo que permite modificarlos o gestionarlos de forma eficiente.
+Ventajas:
+- Claridad: Fácil identificación de parámetros por grupo y entorno.
+- Escalabilidad: Crecimiento estructurado de la configuración.
 
-Este enfoque te permitirá integrar ParamsX de manera más efectiva en tu flujo de trabajo y mantener el control de tus parámetros en AWS SSM.
+Al registrar en la configuración de ParamsX los parámetros tipo: "/APP/gestorClientes" aprovechamos esta estructura para buscar y gestionar parámetros de forma eficiente.
+
+### ¿Cómo funciona?
+Al ejecutar ```paramsx``` desde la terminal, accedes a un menú interactivo con estas opciones principales:
+
+1. Leer parámetros
+- Navega por la lista de parámetros configurada en tu archivo de configuración y selecciona cuál descargar.
+- Elige el entorno deseado (por ejemplo, DEV o PROD).
+- Archivos generados:
+    - parameters_DEV.py o parameters_PROD.py → Edita estos archivos para modificar, añadir o eliminar parámetros.
+    - parameters_DEV_backup.py → Respaldo automático del archivo descargado.
+Los archivos se crean en la misma ruta desde donde ejecutas paramsx, evitando movernos innecesariamente entre carpetas.
+
+2. Comparar y actualizar parámetros
+- Una vez finalizados los ajustes en los parámetros descargados, selecciona esta opción.
+- El programa pedirá el entorno correspondiente y realizará una comparación detallada:
+    - Nuevos: Parámetros que serán añadidos.
+    - Modificados: Parámetros existentes que serán actualizados.
+    - Eliminados: Parámetros que serán borrados de AWS.
+Revisa los cambios antes de confirmar. Una vez completada la operación, los archivos temporales serán eliminados automáticamente para mantener el entorno limpio.
+
+3. Crear backups
+- Realiza copias de seguridad de los parámetros, eligiendo entre:
+    - Parámetros de un entorno específico.
+    - Todos los parámetros configurados en tu lista.
+    - Opcional: Descarga de todos los parámetros almacenados en tu cuenta de AWS.
+Esto te permitirá mantener respaldos seguros o realizar migraciones/reorganizaciones según sea necesario.
+
+### Requisitos
+ParamsX utiliza boto3 para interactuar con AWS. Asegúrate de tener configuradas tus credenciales de AWS antes de usarlo.
+
+Te interesa? pues sigue leyendo y explico como instalarlo.
+
 
 ## Instalación
 
+Para instalar ParamsX, utiliza el comando:
+
 ```pip install paramx```
 
-#### Configuración manual del PATH
-En algunos sistemas, especialmente en Windows, muchas de las veces es por las restricciones que ponen las empresas para proteger los equipos, es posible que durante la instalación el PATH no se configure automáticamente. Si esto ocurre, deberás configurarlo manualmente. 
-- Configuración del PATH en Windows:
-Ve al Panel de control.
-Busca y selecciona la opción Editar las variables de usuario para nombreUsuario.
-Añade una nueva entrada con el siguiente valor:
-```C:\Users\<tu_usuario>\AppData\Roaming\Python\Python<versión>\Scripts```
-Nota: Reemplaza <tu_usuario> por tu nombre de usuario y <versión> por la versión de Python instalada, como 312 para Python 3.12.
-Haz clic en Aceptar en todas las ventanas y reinicia tu terminal.
-
-- Configuración del PATH en Linux/MacOS:
-Abre tu terminal y edita el archivo de configuración de tu shell:
-Para bash: ```~/.bashrc```
-Para zsh: ```~/.zshrc```
-Añade la siguiente línea al final del archivo:
-```export PATH="$HOME/.local/bin:$PATH"```
-Guarda los cambios y recarga la configuración del shell ejecutando:
-```source ~/.bashrc```  # Para bash
-```source ~/.zshrc```   # Para zsh
-
-Una vez instalado, verifica que el comando paramsx esté disponible ejecutando:
-```paramsx --help```
-
 ### Configuración inicial
-Una vez instalado el paquete, debes configurar ParamsX antes de usarlo. Para ello, ejecuta el siguiente comando:
+Después de instalar el paquete, es necesario configurarlo antes de usarlo. Ejecuta:
+
 ``` paramsx configure ```
 
 Este comando creará automáticamente una carpeta de configuración en tu directorio de usuario:
 
-Windows: C:\Users\<tu_usuario>\.xsoft
-Linux/MacOS: /home/<tu_usuario>/.xsoft
+- Windows: C:\Users\<tu_usuario>\.xsoft
+- Linux/MacOS: /home/<tu_usuario>/.xsoft
 
-Dentro de esta carpeta encontrarás un archivo llamado paramsx_config.py. 
-Este archivo contiene la configuración inicial de la librería. Antes de usarla, debes asegurarte de editar este archivo para incluir el perfil de AWS y la región que utilizarás.
+Dentro de esta carpeta, encontrarás el archivo paramsx_config.py. Este archivo contiene la configuración inicial que debes ajustar según tu entorno.
 
-Contenido de paramsx_config.py:
+Ejemplo del contenido de paramsx_config.py:
 
 ```
 configuraciones = {
@@ -72,8 +81,31 @@ configuraciones = {
 ```
 Nota: Si el archivo paramsx_config.py ya existe, no será sobrescrito durante la instalación para proteger las configuraciones personalizadas.
 
+#### Configuración manual del PATH
+En algunos sistemas (especialmente en entornos corporativos como Windows), el PATH puede no configurarse automáticamente durante la instalación. Si ocurre esto, sigue los pasos según tu sistema operativo:
 
-## Modo de Uso
+- En Windows
+1. Ve al Panel de control y busca: Editar las variables de usuario para <tu_usuario>.
+2. Añade una nueva entrada en las variables de usuario con el siguiente valor:
+```C:\Users\<tu_usuario>\AppData\Roaming\Python\Python<versión>\Scripts``` 
+(Reemplaza <tu_usuario> por tu nombre de usuario y <versión> por la versión de Python, como 312 para Python 3.12).
+3. Guarda los cambios y reinicia tu terminal.
+
+- En Linux/MacOS
+1. Abre tu terminal y edita el archivo de configuración de tu shell:
+    - Para bash: ~/.bashrc
+    - Para zsh: ~/.zshrc
+2. Añade la siguiente línea al final del archivo:
+```export PATH="$HOME/.local/bin:$PATH"```
+3. Guarda los cambios y recarga la configuración del shell ejecutando:
+```source ~/.bashrc   # Para bash```
+```source ~/.zshrc    # Para zsh```
+
+Una vez instalado, verifica que el comando paramsx esté disponible ejecutando:
+```paramsx --help```
+
+
+## Modo de empleo
 Ejecuta el comando principal desde la terminal:
 
 ```paramsx```
@@ -85,7 +117,6 @@ El programa mostrará un menú donde Podrás:
 - Cargar y actualizar parámetros.
 - Backup de parámetros.
 
-
 ### Leer Parámetros:
 1. Selecciona la opción "Leer parámetros" en el menú.
 2. Elige el prefijo y el entorno que deseas consultar.
@@ -93,16 +124,7 @@ El programa mostrará un menú donde Podrás:
     - parameters_DEV.py
     - parameters_DEV_backup.py
     ```Importante: Los archivos se generarán en la misma ruta desde donde ejecutes el comando paramsx```
-
-### Modificar parámetros actuales
-Un pequeño truco para modificar tus parámetros actuales:
-1. Crea los archivos necesarios:
-    - parameters_DEV.py (Cambia DEV por el entorno deseado)
-    - parameters_DEV_backup.py (Cambia DEV por el entorno deseado)
-2. Copia tus parámetros dentro de cada uno de ellos.
-3. Modifica los en el archivo parameters_DEV.py
-4. Accede a paramsx y usa la opción 2 de cargar seleccionando el entorno.
-5. Verás tus parametros nuevos, modificados y los que se eliminarán.
+4. Edita el archivo parameters_{entorno}.py con tu software favorito.
 
 ### Cargar Parámetros:
 1. Modifica los archivos generados (parameters_DEV.py).
@@ -125,18 +147,38 @@ Se crea un archivo total_listed_parameters_backup.py que contiene los parámetro
 3. Backup de todos los parámetros de la cuenta de AWS:
 Lee todos los parámetros de AWS SSM desde la raíz (/).
 Se crea un archivo all_parameters_backup.py con el respaldo completo de la cuenta.
-Ten en cuenta que este proceso puede tardar dependiendo de la cantidad de parámetros almacenados.
+Nota: Este proceso puede tardar dependiendo de la cantidad de parámetros almacenados.
+
 
 ### Notas Adicionales
-- Credenciales de AWS:
-    Asegúrate de que el perfil especificado en paramsx_config.py exista en tus archivos de configuración de AWS (~/.aws/credentials y ~/.aws/config).
-
 - Seguridad:
     Los parámetros se manejan como SecureString para garantizar que la información sensible esté cifrada
 
-- Backup:
-    Antes de realizar cualquier cambio, ParamsX crea automáticamente un respaldo (parameters_DEV_backup.py). Este archivo se eliminará después de cargar los nuevos parámetro
+- Modificar todos los parámetros actuales:
+ParamsX ha sido diseñado para trabajar fácilmente con entornos y listas de parámetros bien organizados. Sin embargo, si necesitas realizar ajustes masivos a tus parámetros, puedes aprovechar la funcionalidad de backup completo para modificar y reorganizar todos tus parámetros cómodamente.
+
+Pasos recomendados para modificar parámetros en masa:
+1. Crea un backup completo:
+    Usa la opción 3 del menú y selecciona "Todos los parámetros de AWS" para generar un archivo de respaldo con todos tus parámetros.
+    El archivo generado será:
+    - all_parameters_backup.py
+2. Duplica y renombra el archivo:
+    Cambia el nombre del archivo de backup para que quede acorde a tu entorno:
+    - parameters_DEV.py
+    - parameters_DEV_backup.py
+3. Modifica los parámetros:
+Edita el archivo parameters_DEV.py según tus necesidades. Puedes añadir, modificar o eliminar parámetros según el entorno.
+4. Carga los nuevos parámetros:
+Selecciona la opción "Cargar parámetros desde archivo" y elige el entorno DEV.
+5. Revisa los cambios:
+    El programa te mostrará una lista detallada de los cambios:
+    - Nuevos: Parámetros que se agregarán.
+    - Modificados: Parámetros existentes que serán actualizados.
+    - Eliminados: Parámetros que se eliminarán de AWS SSM.
+6. Confirma la carga:
+Una vez revisados los cambios, confirma para aplicar los ajustes en AWS SSM.
+
 
 ## Licencia
-ParamsX se distribuye bajo la licencia MIT. Puedes usarlo libremente, modificarlo y adaptarlo a tus necesidades. Recuerda siempre hacer un respaldo de tus configuraciones antes de realizar cambios.
-```Nota: El creador de ParamsX no se hace responsable de posibles pérdidas de datos o configuraciones incorrectas.```
+ParamsX se distribuye bajo la licencia MIT, lo que significa que puedes usarlo libremente, modificarlo y adaptarlo a tus necesidades.
+```Nota: No hay responsabilidad alguna en posibles pérdidas de datos o configuraciones incorrectas. Por favor, asegúrate de revisar cuidadosamente los cambios antes de confirmarlos.```
