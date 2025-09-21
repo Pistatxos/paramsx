@@ -7,7 +7,7 @@ from .funcions import (
     draw_header, draw_footer, show_main_menu, show_comparison_results,
     show_environment_selection, show_message, show_parameter_selection,
     get_parameters_by_prefix, delete_parameter, export_parameters_to_file, 
-    compare_parameters, load_parameters
+    compare_parameters, load_parameters, show_main_menu_selection
 )
 
 
@@ -41,18 +41,13 @@ def main(stdscr):
     PARAMETER_LIST = config['parameter_list']
 
     while True:
-        stdscr.clear()
-        draw_header(stdscr)
-        show_main_menu(stdscr)
-        draw_footer(stdscr)
-        stdscr.refresh()
-
-        choice = stdscr.getkey()
+        # Usar el menú con navegación por flechas
+        choice_idx = show_main_menu_selection(stdscr)
+        if choice_idx is None:  # Esc en el menú principal
+            break
+        choice = choice_idx + 1
         
-        if choice == '\x1b':  # Código ASCII para 'Esc'
-                break  # Salir del programa
-        
-        elif choice == '1':
+        if choice == 1:
             # Leer parámetros
             param_choice = show_parameter_selection(stdscr, PARAMETER_LIST)
             if param_choice is None:  # Si se presionó Esc

@@ -183,49 +183,186 @@ def show_main_menu(stdscr):
     stdscr.addstr(start_line + 2, 0, "3. Crear Backup de parámetros".ljust(60))
     stdscr.addstr(start_line + 3, 0, "Elija una opción (1/2): ")
 
-# Mostrar selección de parámetros
-def show_parameter_selection(stdscr, options):
-    stdscr.clear()
-    draw_header(stdscr)
-    start_line = HEADER_ASCII.count("\n") + 1  # Calcula el inicio después del header
-    stdscr.addstr(start_line, 0, "Seleccione un parámetro para leer:".center(60, "-"))
-    for idx, option in enumerate(options, start=1):
-        stdscr.addstr(start_line + idx, 0, f"{idx}. {option}")
-    draw_footer(stdscr)
-    stdscr.refresh()
-
+# Mostrar menú principal con navegación
+def show_main_menu_selection(stdscr):
+    selected = 0
+    buffer = ""
+    options = [
+        "Leer parámetros",
+        "Cargar parámetros desde archivo", 
+        "Crear Backup de parámetros"
+    ]
+    
+    def render():
+        stdscr.clear()
+        draw_header(stdscr)
+        start_line = HEADER_ASCII.count("\n") + 1
+        
+        for idx, option in enumerate(options, start=1):
+            line = f"{idx}. {option}"
+            if idx - 1 == selected:
+                stdscr.addstr(start_line + idx - 1, 0, line, curses.A_REVERSE)
+            else:
+                stdscr.addstr(start_line + idx - 1, 0, line)
+        
+        # Mostrar instrucciones y buffer de entrada
+        input_line = start_line + len(options) + 1
+        stdscr.addstr(input_line, 0, f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}")
+        draw_footer(stdscr)
+        stdscr.refresh()
+    
+    render()
+    
     while True:
         key = stdscr.getkey()
-        if key == '\x1b':  # Si se presiona Esc
-            return None  # Cancelar selección
-        try:
-            choice = int(key) - 1
-            if 0 <= choice < len(options):
-                return choice
-        except ValueError:
-            pass  # Ignorar entradas inválidas
+        
+        if key == '\x1b':  # Esc
+            return None
+        elif key == 'KEY_UP':
+            if selected > 0:
+                selected -= 1
+            buffer = ""
+            render()
+        elif key == 'KEY_DOWN':
+            if selected < len(options) - 1:
+                selected += 1
+            buffer = ""
+            render()
+        elif key == '\n' or key == '\r':  # Enter
+            if buffer.isdigit():
+                choice = int(buffer) - 1
+                if 0 <= choice < len(options):
+                    return choice
+                buffer = ""
+                render()
+            else:
+                return selected
+        elif key == 'KEY_BACKSPACE' or key == '\b' or key == '\x7f':
+            buffer = buffer[:-1]
+            render()
+        elif key.isdigit():
+            buffer += key
+            render()
+        elif key.lower() == 'q':
+            return None
+
+# Mostrar selección de parámetros
+def show_parameter_selection(stdscr, options):
+    selected = 0
+    buffer = ""
+    
+    def render():
+        stdscr.clear()
+        draw_header(stdscr)
+        start_line = HEADER_ASCII.count("\n") + 1
+        stdscr.addstr(start_line, 0, "Seleccione un parámetro para leer:".center(60, "-"))
+        
+        for idx, option in enumerate(options, start=1):
+            line = f"{idx}. {option}"
+            if idx - 1 == selected:
+                stdscr.addstr(start_line + idx, 0, line, curses.A_REVERSE)
+            else:
+                stdscr.addstr(start_line + idx, 0, line)
+        
+        # Mostrar instrucciones y buffer de entrada
+        input_line = start_line + len(options) + 2
+        stdscr.addstr(input_line, 0, f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}")
+        draw_footer(stdscr)
+        stdscr.refresh()
+    
+    render()
+    
+    while True:
+        key = stdscr.getkey()
+        
+        if key == '\x1b':  # Esc
+            return None
+        elif key == 'KEY_UP':
+            if selected > 0:
+                selected -= 1
+            buffer = ""
+            render()
+        elif key == 'KEY_DOWN':
+            if selected < len(options) - 1:
+                selected += 1
+            buffer = ""
+            render()
+        elif key == '\n' or key == '\r':  # Enter
+            if buffer.isdigit():
+                choice = int(buffer) - 1
+                if 0 <= choice < len(options):
+                    return choice
+                buffer = ""
+                render()
+            else:
+                return selected
+        elif key == 'KEY_BACKSPACE' or key == '\b' or key == '\x7f':
+            buffer = buffer[:-1]
+            render()
+        elif key.isdigit():
+            buffer += key
+            render()
+        elif key.lower() == 'q':
+            return None
 
 # Mostrar selección de entorno
 def show_environment_selection(stdscr, environments):
-    stdscr.clear()
-    draw_header(stdscr)
-    start_line = HEADER_ASCII.count("\n") + 1
-    stdscr.addstr(start_line, 0, "Seleccione el entorno:".center(60, "-"))
-    for idx, env in enumerate(environments, start=1):
-        stdscr.addstr(start_line + idx, 0, f"{idx}. {env}")
-    draw_footer(stdscr)
-    stdscr.refresh()
-
+    selected = 0
+    buffer = ""
+    
+    def render():
+        stdscr.clear()
+        draw_header(stdscr)
+        start_line = HEADER_ASCII.count("\n") + 1
+        stdscr.addstr(start_line, 0, "Seleccione el entorno:".center(60, "-"))
+        
+        for idx, env in enumerate(environments, start=1):
+            line = f"{idx}. {env}"
+            if idx - 1 == selected:
+                stdscr.addstr(start_line + idx, 0, line, curses.A_REVERSE)
+            else:
+                stdscr.addstr(start_line + idx, 0, line)
+        
+        # Mostrar instrucciones y buffer de entrada
+        input_line = start_line + len(environments) + 2
+        stdscr.addstr(input_line, 0, f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}")
+        draw_footer(stdscr)
+        stdscr.refresh()
+    
+    render()
+    
     while True:
         key = stdscr.getkey()
-        if key == '\x1b':  # Si se presiona Esc
-            return None  # Cancelar selección
-        try:
-            choice = int(key) - 1
-            if 0 <= choice < len(environments):
-                return choice
-        except ValueError:
-            pass  # Ignorar entradas inválidas
+        
+        if key == '\x1b':  # Esc
+            return None
+        elif key == 'KEY_UP':
+            if selected > 0:
+                selected -= 1
+            buffer = ""
+            render()
+        elif key == 'KEY_DOWN':
+            if selected < len(environments) - 1:
+                selected += 1
+            buffer = ""
+            render()
+        elif key == '\n' or key == '\r':  # Enter
+            if buffer.isdigit():
+                choice = int(buffer) - 1
+                if 0 <= choice < len(environments):
+                    return choice
+                buffer = ""
+                render()
+            else:
+                return selected
+        elif key == 'KEY_BACKSPACE' or key == '\b' or key == '\x7f':
+            buffer = buffer[:-1]
+            render()
+        elif key.isdigit():
+            buffer += key
+            render()
+        elif key.lower() == 'q':
+            return None
 
 # Pantalla de confirmación o resultados
 def show_message(stdscr, message, color_pair=1):

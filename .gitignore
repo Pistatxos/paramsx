@@ -62,3 +62,6 @@ local_settings.py
 *.tmp
 logs/
 *.sqlite
+
+# version python
+.python-version
