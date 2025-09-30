@@ -250,23 +250,49 @@ def show_main_menu_selection(stdscr):
 def show_parameter_selection(stdscr, options):
     selected = 0
     buffer = ""
+    scroll_offset = [0]  # Usar lista para que sea mutable desde render()
     
     def render():
         stdscr.clear()
         draw_header(stdscr)
         start_line = HEADER_ASCII.count("\n") + 1
+        max_y, max_x = stdscr.getmaxyx()
+        
         stdscr.addstr(start_line, 0, "Seleccione un parámetro para leer:".center(60, "-"))
         
-        for idx, option in enumerate(options, start=1):
-            line = f"{idx}. {option}"
-            if idx - 1 == selected:
-                stdscr.addstr(start_line + idx, 0, line, curses.A_REVERSE)
-            else:
-                stdscr.addstr(start_line + idx, 0, line)
+        # Calcular cuántas líneas podemos mostrar
+        available_height = max_y - start_line - 4  # Dejar espacio para footer e instrucciones
+        visible_count = min(len(options), available_height)
+        
+        # Ajustar scroll para mantener selected visible
+        if selected < scroll_offset[0]:
+            scroll_offset[0] = selected
+        elif selected >= scroll_offset[0] + visible_count:
+            scroll_offset[0] = selected - visible_count + 1
+        
+        # Mostrar solo las opciones visibles
+        for i in range(visible_count):
+            actual_idx = scroll_offset[0] + i
+            if actual_idx < len(options):
+                line = f"{actual_idx + 1}. {options[actual_idx]}"
+                if actual_idx == selected:
+                    stdscr.addstr(start_line + i + 1, 0, line, curses.A_REVERSE)
+                else:
+                    stdscr.addstr(start_line + i + 1, 0, line)
+        
+        # Mostrar info de scroll si es necesario
+        if len(options) > visible_count:
+            scroll_info = f"({scroll_offset[0] + 1}-{min(scroll_offset[0] + visible_count, len(options))} de {len(options)})"
+            stdscr.addstr(start_line + visible_count + 1, 0, scroll_info)
         
         # Mostrar instrucciones y buffer de entrada
-        input_line = start_line + len(options) + 2
-        stdscr.addstr(input_line, 0, f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}")
+        input_line = start_line + visible_count + 2
+        if len(options) > visible_count:
+            input_line += 1  # Una línea extra para el indicador de scroll
+        
+        # Solo mostrar instrucciones si hay espacio
+        if input_line < max_y - 2:
+            stdscr.addstr(input_line, 0, f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}")
         draw_footer(stdscr)
         stdscr.refresh()
     

@@ -93,7 +93,7 @@ def main(stdscr):
             # Confirmación de archivos creados
             show_message(stdscr, f"Archivos creados:\n- {file_name}\n- {backup_file_name}", 3)
 
-        elif choice == '2':
+        elif choice == 2:
             # Cargar parámetros desde archivo
             env_choice = show_environment_selection(stdscr, environments)
             if env_choice is None:  # Si se presionó Esc
@@ -158,7 +158,7 @@ def main(stdscr):
             else:
                 show_message(stdscr, "No se encontraron cambios entre los archivos.", 3)
 
-        elif choice == '3':
+        elif choice == 3:
             # Crear backup
             PARAMETER_LIST.append("Total parámetros listados.")  # Agregar opción para backup total listado
             PARAMETER_LIST.append("Total parámetros de la cuenta.")  # Añadir opción para backup total de la cuenta

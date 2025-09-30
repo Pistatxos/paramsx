@@ -12,6 +12,7 @@ dist/
 .eggs/
 *.egg
 *.whl
+publicarPypi.md
 
 # Archivos de configuración de entornos virtuales
 *.env
