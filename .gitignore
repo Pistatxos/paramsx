@@ -8,6 +8,7 @@ __pycache__/
 # Distribución y construcción
 build/
 dist/
+.claude/
 *.egg-info/
 .eggs/
 *.egg
