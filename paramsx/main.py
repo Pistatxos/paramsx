@@ -56,9 +56,12 @@ def load_config():
     spec.loader.exec_module(modulo)
 
     config = dict(modulo.configuraciones)
-    # 'abac' y 'tags_obligatorias' son opcionales en el fichero del usuario:
-    # si no están, se usan los valores de la plantilla que trae el paquete.
+    # 'abac', 'obligatorias_vacias' y 'tags_obligatorias' son opcionales en el fichero del
+    # usuario: si no están, se usan los valores de la plantilla que trae el paquete.
     config["abac"] = bool(getattr(modulo, "abac", plantilla_config.abac))
+    config["obligatorias_vacias"] = bool(
+        getattr(modulo, "obligatorias_vacias", plantilla_config.obligatorias_vacias)
+    )
     config["tags_obligatorias"] = list(
         getattr(modulo, "tags_obligatorias", plantilla_config.tags_obligatorias)
     )
@@ -142,7 +145,7 @@ def leer_ruta(stdscr, ssm, full_path, abac, tags_obligatorias):
 
 
 # Feature 2: crear un parámetro nuevo, siempre en convención "min"
-def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias):
+def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias, obligatorias_vacias=False):
     env_choice = show_environment_selection(stdscr, entornos)
     if env_choice is None:
         return
@@ -197,7 +200,14 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias):
 
     # 3. Tags obligatorias
     tags = {}
+    faltantes = []
     if abac:
+        if obligatorias_vacias:
+            ayuda_tags = ("Las tags sostienen el control de acceso ABAC vía IAM. "
+                          "Puedes dejarla vacía: si no tiene valor no se creará en AWS.")
+        else:
+            ayuda_tags = "Las tags sostienen el control de acceso ABAC vía IAM: son obligatorias."
+
         for indice, clave in enumerate(tags_obligatorias, start=1):
             predeterminado = entorno if clave == "Environment" else ""
             respuesta = prompt_input(
@@ -205,14 +215,15 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias):
                 f"Crear nuevo parámetro (3/3): tags [{indice}/{len(tags_obligatorias)}]",
                 f"Valor de la tag obligatoria '{clave}':",
                 valor=predeterminado,
-                ayuda="Las tags sostienen el control de acceso ABAC vía IAM: son obligatorias.",
+                permitir_vacio=obligatorias_vacias,
+                ayuda=ayuda_tags,
             )
             if respuesta is None:
                 return
             tags[clave] = respuesta.strip()
 
         faltantes = validar_tags_obligatorias(tags, tags_obligatorias)
-        if faltantes:
+        if faltantes and not obligatorias_vacias:
             show_report(
                 stdscr,
                 "Tags obligatorias incompletas",
@@ -220,6 +231,9 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias):
                 color_pair=2,
             )
             return
+
+        # Las tags sin valor no se suben a AWS
+        tags = {clave: valor for clave, valor in tags.items() if valor}
 
     # Aviso de correlación de naming en RDS (no bloquea)
     aviso_rds = check_rds_correlacion(ssm, path)
@@ -229,6 +243,10 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias):
     if abac:
         lineas.append("Tags:")
         lineas.extend([f"  {clave} = {valor_tag}" for clave, valor_tag in tags.items()])
+        if faltantes:
+            lineas.append(
+                f"  Se quedan vacías (no se crearán en AWS): {', '.join(faltantes)}"
+            )
         lineas.append("")
     if aviso_rds:
         lineas.extend([aviso_rds, ""])
@@ -297,6 +315,7 @@ def main(stdscr, config=None):
     PARAMETER_LIST = config['parameter_list']
     ABAC = config['abac']
     TAGS_OBLIGATORIAS = config['tags_obligatorias']
+    OBLIGATORIAS_VACIAS = config.get('obligatorias_vacias', False)
 
     while True:
         # Usar el menú con navegación por flechas
@@ -395,21 +414,28 @@ def main(stdscr, config=None):
 
             aplicados = []
             errores = []
+            vacias = []
 
             for change in changes:
                 param_name = change["name"]
                 tipo = change["tipo"]
 
                 if tipo in ("Nuevo", "Modificado"):
-                    # Validación bloqueante por parámetro: sin las tags obligatorias no se sube nada
                     if ABAC:
                         faltantes = validar_tags_obligatorias(change["tags"], TAGS_OBLIGATORIAS)
-                        if faltantes:
+                        if faltantes and not OBLIGATORIAS_VACIAS:
+                            # Validación bloqueante por parámetro: sin las tags no se sube nada
                             errores.append(
                                 f"✗ {param_name}: no se ha subido (ni valor ni tags). "
                                 f"Faltan las tags obligatorias: {', '.join(faltantes)}."
                             )
                             continue
+                        if faltantes:
+                            # Permitidas vacías: se sube igual y esas tags no se crean en AWS
+                            vacias.append(
+                                f"· {param_name}: sin valor en {', '.join(faltantes)} "
+                                "(no se crean en AWS)."
+                            )
 
                     try:
                         if change["value_changed"]:
@@ -448,6 +474,10 @@ def main(stdscr, config=None):
                     aplicados.append(change)
 
             lineas = [f"Cambios aplicados: {len(aplicados)} de {len(changes)}"]
+
+            if vacias:
+                lineas.extend(["", f"Tags obligatorias vacías ({len(vacias)}):"])
+                lineas.extend(vacias)
 
             if errores:
                 # Se conservan los ficheros para que el usuario corrija y vuelva a cargar.
@@ -589,7 +619,9 @@ def main(stdscr, config=None):
 
         elif choice == 4:
             # Crear nuevo parámetro (siempre en convención "min")
-            crear_parametro(stdscr, ssm, environments, ABAC, TAGS_OBLIGATORIAS)
+            crear_parametro(
+                stdscr, ssm, environments, ABAC, TAGS_OBLIGATORIAS, OBLIGATORIAS_VACIAS
+            )
 
         else:
             show_message(stdscr, "Opción inválida. Inténtalo de nuevo.", 2)
@@ -630,6 +662,9 @@ Configuración (~/.xsoft/paramsx_config.py):
                     'max' -> /API/DEV/STA    (entorno en mayúscula, tras el 1er segmento)
   abac              True para gestionar las tags obligatorias en el fichero exportado.
   tags_obligatorias Tags que sostienen el control de acceso ABAC vía IAM.
+  obligatorias_vacias  False -> no se sube un parámetro al que le falte alguna tag.
+                       True  -> se permite dejarlas vacías; las tags sin valor
+                                no se crean en AWS.
 
 Si necesitas más ayuda puedes leer el readme en GitHub o en Pypi:
 - https://github.com/Pistatxos/paramsx

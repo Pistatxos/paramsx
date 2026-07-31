@@ -24,6 +24,13 @@ configuraciones = {
 #   False -> las tags no aparecen en el fichero exportado (comportamiento legacy, sin tags).
 abac = True
 
+# ¿Se pueden dejar vacías las tags obligatorias?
+#   False -> validación bloqueante: si a un parámetro le falta alguna de 'tags_obligatorias'
+#            no se sube (ni su valor ni sus tags).
+#   True  -> se permiten vacías: el parámetro se sube igualmente y las tags sin valor
+#            simplemente NO se crean en AWS (no se suben como etiquetas vacías).
+obligatorias_vacias = False
+
 # Estas tags sostienen el control de acceso ABAC vía IAM en toda la cuenta AWS.
 # La lista es ampliable, pero estas 8 son el mínimo por defecto.
 tags_obligatorias = [

@@ -127,6 +127,8 @@ configuraciones = {
 
 abac = True
 
+obligatorias_vacias = False
+
 tags_obligatorias = [
     "Application", "Environment", "Owner", "Project",
     "Product", "Service", "Component", "ManagedBy",
@@ -217,14 +219,25 @@ parametros = [
 
 Este formato con tags **solo existe en el fichero temporal que genera ParamsX**: no se ve en la consola de AWS ni se persiste en ningún otro sitio. Tiene el mismo ciclo de vida que el resto del fichero (se genera, se edita, se compara, se aplica y se borra al confirmar).
 
+#### `obligatorias_vacias`: cuando alguna tag tiene que ir vacía
+
+En la práctica hay parámetros a los que no les aplica alguna de las 8 tags. Ese caso se controla con `obligatorias_vacias`, y solo tiene efecto si `abac = True`:
+
+| `obligatorias_vacias` | Comportamiento |
+|---|---|
+| `False` (por defecto) | Validación bloqueante: si a un parámetro le falta cualquiera de las tags obligatorias no se sube **ni su valor ni sus tags**. Al crear un parámetro tampoco te deja continuar dejando una tag en blanco. |
+| `True` | Se permiten vacías: el parámetro se sube igualmente y **las tags sin valor no se crean en AWS** (no se suben como etiquetas vacías). En el informe de carga verás qué parámetros han quedado con tags vacías y cuáles son. |
+
+Ojo con la diferencia entre "vacía" y "borrada": con `obligatorias_vacias = True`, una tag que se deja en blanco y **nunca existió** simplemente no se crea; pero si esa tag **ya tenía valor en AWS** y la vacías en el fichero, se interpreta como que quieres borrarla y se elimina del parámetro. Es la forma de quitar una tag.
+
 Detalles del comportamiento con `abac = True`:
 
-- La validación es **bloqueante y por parámetro**: si a uno le falta cualquiera de las 8 tags no se sube **ni su valor ni sus tags**, y verás un error indicando qué tags faltan y a qué `parameter_name`. El resto de parámetros del fichero que estén completos se suben con normalidad.
+- La validación es **por parámetro**, no global: con `obligatorias_vacias = False`, si a uno le falta cualquiera de las 8 tags no se sube ni su valor ni sus tags, y verás un error indicando qué tags faltan y a qué `parameter_name`. El resto de parámetros del fichero que estén completos se suben con normalidad.
 - Cuando una carga queda a medias, los ficheros `parameters_{entorno}.py` y su backup **no se borran**, para que corrijas lo que falta y vuelvas a cargar. El backup se resincroniza con lo ya aplicado, así que la segunda pasada solo sube lo que quedó pendiente.
 - Si el parámetro ya existe y le faltan tags (creado antes de esta versión), se rellenan en este mismo flujo de edición, sin borrar ni recrear el parámetro.
 - Los cambios de tags se aplican con `add_tags_to_resource` / `remove_tags_from_resource` en la misma pasada que el valor. Vaciar el campo de una tag en el fichero equivale a borrarla en AWS.
 - Las tags de sistema (`aws:*`) no se exportan ni se tocan. Las tags que ya existan en AWS y no estén en la lista obligatoria se conservan y se pueden editar.
-- No hay forma de saltarse la validación salvo poner `abac = False` explícitamente en tu configuración.
+- No hay forma de saltarse la validación por parámetro salvo relajarla explícitamente en tu configuración con `obligatorias_vacias = True`, o desactivar las tags por completo con `abac = False`.
 
 #### Configuración manual del PATH
 En algunos sistemas (especialmente en entornos corporativos como Windows), el PATH puede no configurarse automáticamente durante la instalación. Si ocurre esto, sigue los pasos según tu sistema operativo:
@@ -287,7 +300,7 @@ El programa mostrará un menú donde Podrás:
 1. Selecciona la opción "Crear nuevo parámetro" y elige el entorno.
 2. Escribe la ruta completa en convención `min` (`/dev/...`): se fuerza a minúscula y se valida que el primer segmento sea el entorno.
 3. Escribe el valor: texto plano o JSON en una línea.
-4. Rellena las tags obligatorias (si `abac = True`). `Environment` viene precargada con el entorno elegido.
+4. Rellena las tags obligatorias (si `abac = True`). `Environment` viene precargada con el entorno elegido. Con `obligatorias_vacias = True` puedes dejar alguna en blanco pulsando Enter: esas no se crearán en AWS.
 5. Confirma en la pantalla de resumen. Si es un parámetro de RDS y falta su contraparte (común o privado), verás el aviso de correlación de naming ahí mismo.
 
 ### Backup Parámetros:
