@@ -76,7 +76,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # Configuración del paquete
 setup(
     name="paramsx",
-    version="2.0.0",
+    version="2.1.0",
     packages=find_packages(),
     include_package_data=True,
     package_data={
