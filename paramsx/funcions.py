@@ -30,29 +30,109 @@ def _codigo_error(error):
     return error.response.get("Error", {}).get("Code", "")
 
 
-# Construir la ruta completa según la convención de naming de la entrada
-def build_full_path(path, convencion, entorno):
+# Valores admitidos en un perfil de naming
+POSICIONES_ENTORNO = ("inicio", "final", "mixto", "ninguno")
+CASES_ENTORNO = ("lower", "upper", "capitalize")
+CASES_RUTA = ("lower", "upper", "capitalize", "ninguno")
+
+# Marcador que indica, en las rutas de perfiles "mixto", dónde va el entorno
+MARCADOR_ENTORNO = "*"
+
+
+# Escribir el entorno como lo pide el perfil: dev -> dev | DEV | Dev
+def aplicar_case_entorno(entorno, case_entorno):
+    if case_entorno == "upper":
+        return entorno.upper()
+    if case_entorno == "capitalize":
+        return entorno.capitalize()
+    return entorno.lower()
+
+
+# Escribir la ruta como pide el perfil al crear un parámetro nuevo. 'capitalize' va
+# segmento a segmento: str.capitalize() sobre la ruta entera pasaría a minúscula todo
+# lo que hay detrás del primer carácter.
+def aplicar_case_ruta(path, case_ruta):
+    if case_ruta == "lower":
+        return path.lower()
+    if case_ruta == "upper":
+        return path.upper()
+    if case_ruta == "capitalize":
+        return "/" + "/".join(s.capitalize() for s in path.strip("/").split("/") if s)
+    return path
+
+
+# Construir la ruta completa aplicando el perfil de naming de la entrada.
+# Las tres posiciones son la misma operación: se normaliza la ruta a una plantilla con
+# un único marcador y se sustituye por el entorno. "ninguno" no lleva marcador.
+def build_full_path(path, perfil, entorno):
     segmentos = [s for s in path.strip("/").split("/") if s]
     if not segmentos:
         raise ValueError(f"Ruta vacía en parameter_list: {path!r}")
 
-    if convencion == "min":
-        # Convención nueva: entorno en minúscula, SIEMPRE como primer segmento
-        return "/" + "/".join([entorno.lower(), *segmentos])
+    posicion = perfil.get("posicion_entorno")
+    if posicion not in POSICIONES_ENTORNO:
+        raise ValueError(
+            f"'posicion_entorno' desconocida {posicion!r} para la ruta {path!r}. "
+            f"Usa una de: {', '.join(POSICIONES_ENTORNO)}."
+        )
 
-    if convencion == "max":
-        # Convención legacy: entorno en mayúscula, insertado TRAS el primer segmento
-        primero, resto = segmentos[0], segmentos[1:]
-        return "/" + "/".join([primero, entorno.upper(), *resto])
+    if posicion == "ninguno":
+        return "/" + "/".join(segmentos)
 
-    raise ValueError(
-        f"Convención desconocida {convencion!r} para la ruta {path!r}. Usa 'min' o 'max'."
-    )
+    if posicion == "inicio":
+        plantilla = [MARCADOR_ENTORNO, *segmentos]
+    elif posicion == "final":
+        plantilla = [*segmentos, MARCADOR_ENTORNO]
+    else:  # mixto: el marcador ya viene puesto en la ruta
+        if segmentos.count(MARCADOR_ENTORNO) != 1:
+            raise ValueError(
+                f"La ruta {path!r} usa un perfil 'mixto' y debe llevar exactamente un "
+                f"'{MARCADOR_ENTORNO}' como segmento para marcar dónde va el entorno."
+            )
+        plantilla = segmentos
+
+    entorno_escrito = aplicar_case_entorno(entorno, perfil.get("case_entorno", "lower"))
+    return "/" + "/".join(entorno_escrito if s == MARCADOR_ENTORNO else s for s in plantilla)
+
+
+# Trozo de nombre de fichero derivado de una entrada de parameter_list:
+# {"path": "/API/*/STA", "convencion": "mixto_max"} -> API_env_STA__mixto_max
+# Lleva la posición del marcador y el perfil porque dos entradas distintas pueden
+# compartir la ruta declarada (con perfiles distintos, o con el entorno en otro sitio)
+# y apuntar a rutas de AWS diferentes: sus ficheros no se pueden pisar.
+def slug_entrada(entrada):
+    segmentos = [s for s in entrada["path"].strip("/").split("/") if s]
+    ruta = "_".join("env" if s == MARCADOR_ENTORNO else s for s in segmentos)
+    convencion = entrada.get("convencion")
+    return f"{ruta}__{convencion}" if convencion else ruta
 
 
 # Etiqueta legible de una entrada de parameter_list para los menús
 def etiqueta_entrada(entrada):
     return f"{entrada['path']}  [{entrada['convencion']}]"
+
+
+# Ficheros exportados que hay en el directorio actual listos para cargar: los que
+# conservan su backup al lado. Se listan tal cual están en disco, sin depender de la
+# parameter_list, para que también aparezcan los de una ruta que ya hayas quitado de
+# la configuración. Devuelve una lista de (fichero, backup).
+def ficheros_cargables(directorio="."):
+    cargables = []
+    try:
+        nombres = sorted(os.listdir(directorio))
+    except OSError:
+        return cargables
+
+    for nombre in nombres:
+        if not nombre.startswith("parameters_") or not nombre.endswith(".py"):
+            continue
+        if nombre.endswith("_backup.py"):
+            continue
+        backup = f"{nombre[:-3]}_backup.py"
+        if os.path.exists(os.path.join(directorio, backup)):
+            cargables.append((nombre, backup))
+
+    return cargables
 
 
 # Función para obtener parámetros con un entorno específico
@@ -238,7 +318,7 @@ def _orden_tags(param, tags_obligatorias):
 
 
 # Función para exportar parámetros a un archivo
-def export_parameters_to_file(parameters, file_path, abac=False, tags_obligatorias=None):
+def export_parameters_to_file(parameters, file_path, tags_activas=False, tags_obligatorias=None):
     tags_obligatorias = tags_obligatorias or []
 
     with open(file_path, 'w') as f:
@@ -249,7 +329,7 @@ def export_parameters_to_file(parameters, file_path, abac=False, tags_obligatori
             parameter_value = param['parameter_value']
             f.write(f"    {{'parameter_name': '{parameter_name}',\n")
 
-            if not abac:
+            if not tags_activas:
                 # Usar triple comillas para valores largos
                 f.write(f"     'parameter_value': \"\"\"{parameter_value}\"\"\"}},\n\n")
                 continue
@@ -307,7 +387,7 @@ def _diff_tags(tags_actuales, tags_backup):
 
 
 # Función para comparar parámetros y mostrar las diferencias
-def compare_parameters(file_path, backup_file_path, stdscr=None, abac=False):
+def compare_parameters(file_path, backup_file_path, stdscr=None, tags_activas=False):
     if not os.path.exists(file_path) or not os.path.exists(backup_file_path):
         return None
 
@@ -345,7 +425,7 @@ def compare_parameters(file_path, backup_file_path, stdscr=None, abac=False):
 
         value_changed = actual["value"] != anterior["value"]
         tags_set, tags_remove = ({}, [])
-        if abac:
+        if tags_activas:
             tags_set, tags_remove = _diff_tags(actual["tags"], anterior["tags"])
 
         if not value_changed and not tags_set and not tags_remove:
@@ -540,7 +620,7 @@ def show_main_menu_selection(stdscr):
             return None
 
 # Mostrar selección de parámetros
-def show_parameter_selection(stdscr, options):
+def show_parameter_selection(stdscr, options, titulo="Seleccione un parámetro para leer:"):
     selected = 0
     buffer = ""
     scroll_offset = [0]  # Usar lista para que sea mutable desde render()
@@ -551,7 +631,7 @@ def show_parameter_selection(stdscr, options):
         start_line = HEADER_ASCII.count("\n") + 1
         max_y, max_x = stdscr.getmaxyx()
 
-        stdscr.addstr(start_line, 0, "Seleccione un parámetro para leer:".center(60, "-"))
+        stdscr.addstr(start_line, 0, titulo.center(60, "-")[:max_x - 1])
 
         # Calcular cuántas líneas podemos mostrar
         available_height = max_y - start_line - 4  # Dejar espacio para footer e instrucciones
@@ -567,7 +647,9 @@ def show_parameter_selection(stdscr, options):
         for i in range(visible_count):
             actual_idx = scroll_offset[0] + i
             if actual_idx < len(options):
-                line = f"{actual_idx + 1}. {options[actual_idx]}"
+                # Truncar al ancho del terminal: los nombres de fichero y las rutas
+                # largas desmaquetarían la lista al hacer wrap
+                line = f"{actual_idx + 1}. {options[actual_idx]}"[:max_x - 1]
                 if actual_idx == selected:
                     stdscr.addstr(start_line + i + 1, 0, line, curses.A_REVERSE)
                 else:
@@ -576,7 +658,7 @@ def show_parameter_selection(stdscr, options):
         # Mostrar info de scroll si es necesario
         if len(options) > visible_count:
             scroll_info = f"({scroll_offset[0] + 1}-{min(scroll_offset[0] + visible_count, len(options))} de {len(options)})"
-            stdscr.addstr(start_line + visible_count + 1, 0, scroll_info)
+            stdscr.addstr(start_line + visible_count + 1, 0, scroll_info[:max_x - 1])
 
         # Mostrar instrucciones y buffer de entrada
         input_line = start_line + visible_count + 2
@@ -585,7 +667,10 @@ def show_parameter_selection(stdscr, options):
 
         # Solo mostrar instrucciones si hay espacio
         if input_line < max_y - 2:
-            stdscr.addstr(input_line, 0, f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}")
+            instrucciones = (
+                f"Usa ↑/↓ para navegar, Enter para seleccionar, o escribe número: {buffer}"
+            )
+            stdscr.addstr(input_line, 0, instrucciones[:max_x - 1])
         draw_footer(stdscr)
         stdscr.refresh()
 

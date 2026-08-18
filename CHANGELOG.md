@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.2.0
+
+### Añadido
+
+- **Perfiles de naming libres.** `min` y `max` dejan de estar cableados en el código: ahora son entradas de un diccionario `naming` en `~/.xsoft/paramsx_config.py` que puedes redefinir, ampliar y renombrar. Cada perfil declara tres cosas:
+  - `posicion_entorno`: `inicio` (`/rds` → `/dev/rds`), `final` (`/API/STA` → `/API/STA/DEV`), `mixto` (`/API/*/STA` → `/API/dev/STA`) o `ninguno` (`/api/sta/auth` → `/api/sta/auth`).
+  - `case_entorno`: `lower`, `upper` o `capitalize`.
+  - `case_ruta`: `lower`, `upper`, `capitalize` o `ninguno`; a qué case se fuerza la ruta al crear un parámetro nuevo. Con `ninguno` se respeta lo que escribas.
+- **Marcador `*` para colocar el entorno donde quieras** (perfiles `mixto`). Sirve para acotar la lectura a un subárbol concreto: `/API/MULTIAPI/*/stan_ai` lee solo `/API/MULTIAPI/DEV/stan_ai` en vez de todo lo que cuelga de `/API/MULTIAPI/DEV`. El `*` debe ser un segmento entero y aparecer exactamente una vez.
+- **`posicion_entorno: "ninguno"`**, para cuentas que separan los entornos por cuenta de AWS y no meten el entorno en la ruta. Antes esas cuentas no podían usar ParamsX: toda ruta recibía un segmento de entorno sí o sí.
+- **`fichero_por_ruta`**: con `True`, el fichero exportado incluye la ruta y el perfil en su nombre (`parameters_dev__API_STA__max.py`), así leer una segunda ruta del mismo entorno no machaca la que estabas editando. Con `False` (por defecto) se mantiene el nombre de siempre. En los dos modos ParamsX **pide confirmación antes de sobrescribir** un fichero de una lectura anterior, porque volver a leer la misma ruta también se lleva por delante lo que tuvieras editado.
+- **La carga (opción 2) lista los ficheros que hay en el directorio**, en vez de pedir ruta y entorno y fallar si no existe el fichero correspondiente. Se ofrecen los que conservan su backup al lado, se lean con `fichero_por_ruta` o sin él, e incluso los de una ruta que ya hayas quitado de tu `parameter_list`.
+- **`convencion_nuevos`**: qué perfil usan los parámetros creados con la opción 4. Si no lo declaras, se usa el primer perfil de `naming`.
+- **Validación de la configuración al arrancar**, para que un naming mal declarado se vea como un error y no como una lista de parámetros vacía: perfil inexistente, `posicion_entorno`/`case_entorno`/`case_ruta` con valores inválidos, perfil `mixto` sin `*`, `*` en un perfil que no es `mixto`, más de un `*`, `*` pegado a un segmento, y aviso si dos entradas resuelven a la misma ruta.
+
+### Cambiado
+
+- **`abac` pasa a llamarse `tags_activas`.** Es el mismo interruptor de siempre (gestionar y validar tags), con un nombre que dice lo que hace en vez de por qué lo queremos nosotros. **El nombre viejo se sigue aceptando**, así que las configuraciones de la 2.0 y la 2.1 funcionan sin tocar nada.
+- **La opción 4 (crear parámetro) ya no está cableada a `min`.** Antes forzaba toda la ruta a minúscula y exigía que el primer segmento fuera el entorno, así que quien nombra sus parámetros en mayúscula no podía crearlos con la herramienta. Ahora se escribe la ruta **sin el entorno**, igual que en `parameter_list`, y ParamsX aplica el perfil de `convencion_nuevos`, respeta el case según `case_ruta` y enseña la ruta resultante en AWS para confirmarla antes de seguir.
+
+### Corregido
+
+- **La convención `max` ponía el entorno en el medio de la ruta.** Con rutas de más de un segmento el entorno se insertaba tras el primer segmento (`/API/MULTIAPI` + `dev` → `/API/DEV/MULTIAPI`), cuando en `max` el entorno va **siempre al final**: `/API/MULTIAPI` + `dev` → `/API/MULTIAPI/DEV`. Con esa inserción en medio, ninguna ruta `max` de más de un segmento resolvía a una ruta real, así que no se veían los parámetros. Las rutas de un solo segmento (`/EMAIL` → `/EMAIL/DEV`) no cambian: ahí el resultado ya era correcto.
+- La documentación de la 2.0.0 (README, plantilla de configuración y `paramsx --help`) describía esa inserción en medio como el comportamiento esperado de `max`, con el ejemplo `/API/STA` → `/API/DEV/STA`. Corregida: el ejemplo correcto es `/API/STA` → `/API/STA/DEV`.
+
+### Actualizar desde la 2.1.0
+
+No hay que tocar nada: sin `naming` en tu fichero se usan los perfiles de la plantilla, donde `min` y `max` significan lo mismo que antes, y `abac` se sigue leyendo como `tags_activas`. Todo lo nuevo (`*`, `ninguno`, `fichero_por_ruta`, `convencion_nuevos`) es opcional. Si quieres usarlo, la forma más rápida de ver la plantilla nueva entera es `paramsx --help` o el README.
+
 ## 2.1.0
 
 ### Añadido
@@ -52,7 +81,7 @@ Además:
 
 - **Doble convención de naming en `parameter_list`.** Cada ruta declara `"convencion": "min"` o `"max"`:
   - `min` (convención nueva): el entorno en minúscula se añade **al principio**. `/rds` + `dev` → `/dev/rds`.
-  - `max` (convención legacy): el entorno en mayúscula se inserta **tras el primer segmento**. `/API/STA` + `dev` → `/API/DEV/STA`; `/EMAIL` + `dev` → `/EMAIL/DEV`.
+  - `max` (convención legacy): el entorno en mayúscula se inserta **tras el primer segmento**. `/API/STA` + `dev` → `/API/DEV/STA`; `/EMAIL` + `dev` → `/EMAIL/DEV`. (Esto era un bug, corregido en la 2.2.0: el entorno va al final, `/API/STA/DEV`.)
 - **Opción 4 del menú: "Crear nuevo parámetro".** Pide ruta (siempre en convención `min`, forzada a minúscula), valor (texto plano o JSON, validado) y las tags obligatorias. Se crea con `Overwrite=False` para no machacar nada. No se puede crear un parámetro con la convención `max`.
 - **Aviso de correlación de naming en RDS.** Al crear un parámetro de RDS se comprueba que exista su contraparte (`/{entorno}/common/rds/{nombre-servicio}` ↔ `/{entorno}/rds/{nombre-servicio}/...`) y se avisa si falta. Es un aviso, no bloquea.
 - **Flag `abac` y tags obligatorias.** Con `abac = True`, el fichero exportado incluye un campo por tag (`tagApplication`, `tagEnvironment`, `tagOwner`, `tagProject`, `tagProduct`, `tagService`, `tagComponent`, `tagManagedBy`) con su valor actual en AWS. Estas 8 tags sostienen el control de acceso ABAC vía IAM de toda la cuenta. La lista vive en `tags_obligatorias`, en el propio fichero de configuración, para poder ampliarla sin tocar código. Con `abac = False` no aparecen tags en el fichero y no se valida nada (comportamiento 1.x).

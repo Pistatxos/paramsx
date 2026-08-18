@@ -61,7 +61,8 @@ la ruta en tu parameter_list a algo más específico (ej. /dev/rds/<sub-ruta>).
 
 2. Comparar y actualizar parámetros
 - Una vez finalizados los ajustes en los parámetros descargados, selecciona esta opción.
-- El programa pedirá el entorno correspondiente y realizará una comparación detallada, tanto de valores como de tags:
+- El programa te muestra **los ficheros que tienes en el directorio** listos para cargar (los que conservan su backup al lado) y eliges cuál. No te pregunta por rutas ni entornos: el fichero ya sabe de dónde salió.
+- Con el elegido hace una comparación detallada, tanto de valores como de tags:
     - Nuevos: Parámetros que serán añadidos.
     - Modificados: Parámetros existentes cuyo valor y/o tags serán actualizados.
     - Eliminados: Parámetros que serán borrados de AWS.
@@ -76,10 +77,10 @@ Esto te permitirá mantener respaldos seguros o realizar migraciones/reorganizac
 
 4. Crear nuevo parámetro
 - Crea un parámetro desde cero sin salir de la herramienta. Te pedirá, en este orden:
-    - La ruta completa, **siempre en convención `min`** (entorno primero y todo en minúscula: se fuerza automáticamente).
+    - La ruta **sin el entorno**, igual que la declaras en `parameter_list`: el perfil de naming se encarga de colocarlo. Verás en pantalla la ruta resultante en AWS antes de seguir.
     - El valor: texto plano o JSON en una línea (por ejemplo `{"host": "x", "user": "y", "pass": "z"}`), que se valida antes de continuar.
-    - Las tags obligatorias, si tienes `abac = True`.
-- No se puede crear un parámetro nuevo con la convención `max`: esa convención existe solo para seguir leyendo y editando los paths legacy.
+    - Las tags obligatorias, si tienes `tags_activas = True`.
+- El perfil que se usa es el que declares en `convencion_nuevos`. Si tu perfil es de tipo `mixto`, escribe el `*` en la ruta para indicar dónde va el entorno.
 - Antes de subirlo verás una pantalla de confirmación con la ruta, el valor y las tags. El parámetro se crea con `Overwrite=False`, así que nunca machaca uno existente.
 - Tras crearlo aparecerá la próxima vez que leas la ruta correspondiente de tu `parameter_list`.
 
@@ -112,20 +113,35 @@ Ejemplo del contenido de paramsx_config.py:
 ```python
 ## Configuraciones ParamsX
 
+naming = {
+    "min": {"posicion_entorno": "inicio", "case_entorno": "lower", "case_ruta": "lower"},
+    "max": {"posicion_entorno": "final", "case_entorno": "upper", "case_ruta": "ninguno"},
+    "mixto_max": {"posicion_entorno": "mixto", "case_entorno": "upper", "case_ruta": "ninguno"},
+    # Crea los tuyos combinando los valores de la tabla, por ejemplo:
+    # "sin_entorno": {"posicion_entorno": "ninguno", "case_entorno": "lower", "case_ruta": "ninguno"},
+}
+
 configuraciones = {
     "profile_name": "default",           # Cambiar por el nombre de tu perfil en ~/.aws/credentials
     "region_name": "eu-south-2",         # Cambiar por tu región de AWS
     "entornos": ['dev', 'pre', 'prod'],  # SIEMPRE en minúscula, es la lista canónica única
     "parameter_list": [
-        {"path": "/common", "convencion": "min"},
-        {"path": "/rds", "convencion": "min"},
-        {"path": "/api", "convencion": "min"},
-        {"path": "/EMAIL", "convencion": "max"},
-        {"path": "/API/STA", "convencion": "max"},
+        {"path": "/common", "convencion": "min"},      # -> /dev/common
+        {"path": "/rds", "convencion": "min"},         # -> /dev/rds
+        {"path": "/EMAIL", "convencion": "max"},       # -> /EMAIL/DEV
+        {"path": "/API/STA", "convencion": "max"},     # -> /API/STA/DEV
+        {"path": "/API/MULTIAPI/*/stan_ai", "convencion": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
     ]
 }
 
-abac = True
+convencion_nuevos = "min"
+
+fichero_por_ruta = False
+
+
+## Configuraciones Tags
+
+tags_activas = True
 
 obligatorias_vacias = False
 
@@ -136,19 +152,55 @@ tags_obligatorias = [
 ```
 Nota: Si el archivo paramsx_config.py ya existe, no será sobrescrito durante la instalación para proteger las configuraciones personalizadas.
 
-### La doble convención de naming: `min` y `max`
+### Los perfiles de naming
 
-Durante la transición a la convención nueva conviven dos formas de construir la ruta. Cada entrada de `parameter_list` declara la suya, y **la diferencia no es solo el case: también cambia la posición donde se inserta el entorno**.
+Cada organización nombra sus parámetros a su manera, así que ParamsX no impone ninguna convención: **tú defines los perfiles que uses en el diccionario `naming` y les pones el nombre que quieras**. Cada entrada de `parameter_list` declara con qué perfil se construye su ruta completa.
 
-| convencion | Qué hace | Ejemplo con entorno `dev` |
+Un perfil tiene tres campos:
+
+| Campo | Valores | Qué decide |
 |---|---|---|
-| `min` | Convención nueva. Añade el entorno en **minúscula al principio** de la ruta. | `/rds` → `/dev/rds` |
-| `max` | Convención legacy. Inserta el entorno en **mayúscula tras el primer segmento**. | `/API/STA` → `/API/DEV/STA` |
-| `max` | Con un solo segmento queda al final. | `/EMAIL` → `/EMAIL/DEV` |
+| `posicion_entorno` | `inicio` \| `final` \| `mixto` \| `ninguno` | Dónde va el entorno dentro de la ruta. |
+| `case_entorno` | `lower` \| `upper` \| `capitalize` | Cómo se escribe el entorno. |
+| `case_ruta` | `lower` \| `upper` \| `capitalize` \| `ninguno` | Case de la ruta al crear parámetros. |
 
-Ya **no existe** la lista `entornos_old`: el entorno en mayúscula de las rutas `max` se deriva con `.upper()` de la misma lista canónica `entornos`, que se escribe siempre en minúscula.
+Y en detalle:
 
-Ejemplo completo de una `parameter_list` migrada, mezclando rutas nuevas y legacy:
+**`posicion_entorno`** — dónde se coloca el entorno, con el entorno `dev`:
+
+| Valor | Ruta declarada | Ruta real en AWS | |
+|---|---|---|---|
+| `inicio` | `/rds` | `/dev/rds` | |
+| `final` | `/API/STA` | `/API/STA/DEV` | |
+| `mixto` | `/API/*/STA` | `/API/DEV/STA` | el `*` marca el sitio |
+| `ninguno` | `/api/sta/auth` | `/api/sta/auth` | una cuenta AWS por entorno |
+
+**`case_entorno`** — cómo se escribe ese entorno en la ruta:
+
+| Valor | `dev` se escribe | `/API/STA` con `posicion_entorno: final` |
+|---|---|---|
+| `lower` | `dev` | `/API/STA/dev` |
+| `upper` | `DEV` | `/API/STA/DEV` |
+| `capitalize` | `Dev` | `/API/STA/Dev` |
+
+**`case_ruta`** — a qué case se fuerza la ruta que escribes al **crear** un parámetro (opción 4). No afecta a leer ni a editar: lo que ya existe en AWS se respeta siempre tal cual esté.
+
+| Valor | Si escribes `/API/MULTIAPI/Token`, se crea |
+|---|---|
+| `lower` | `/api/multiapi/token` |
+| `upper` | `/API/MULTIAPI/TOKEN` |
+| `capitalize` | `/Api/Multiapi/Token` |
+| `ninguno` | `/API/MULTIAPI/Token` |
+
+**No hay una lista cerrada de perfiles.** Los tres campos se combinan libremente, así que la plantilla no intenta traértelos todos: define los dos o tres que use tu organización y olvídate del resto. `min` y `max` vienen predefinidos porque son los que ParamsX traía antes de que los perfiles fueran configurables.
+
+**`mixto` y el marcador `*`.** Cuando el entorno no va ni al principio ni al final, se marca su sitio con un `*` en la propia ruta. Es útil para acotar la lectura a un solo subárbol: con `/API/MULTIAPI/*/stan_ai` lees únicamente `/API/MULTIAPI/DEV/stan_ai`, en vez de todo lo que cuelga de `/API/MULTIAPI/DEV`. El `*` debe ser un segmento entero y aparecer **exactamente una vez**, y solo se admite en perfiles `mixto`: si el perfil y la ruta no cuentan la misma historia, ParamsX te lo dice al arrancar en vez de leer una ruta inexistente y devolverte una lista vacía.
+
+**`ninguno` y las cuentas sin entorno en la ruta.** Hay organizaciones que separan los entornos por cuenta de AWS y no meten `dev`/`prod` en el path. Con `posicion_entorno: "ninguno"` la ruta se usa tal cual; el selector de entorno del menú sigue existiendo, pero no toca la ruta. En este perfil el `case_entorno` es irrelevante, porque no se escribe ningún entorno.
+
+Ya **no existe** la lista `entornos_old`: el entorno se escribe siempre a partir de la lista canónica `entornos` (en minúscula), aplicándole el `case_entorno` del perfil. Si en tus rutas el entorno se llama `staging` en vez de `pre`, ponlo así en `entornos`.
+
+Ejemplo completo de una `parameter_list` real, mezclando perfiles:
 
 ```python
     "parameter_list": [
@@ -160,20 +212,28 @@ Ejemplo completo de una `parameter_list` migrada, mezclando rutas nuevas y legac
         {"path": "/API/p15", "convencion": "max"},
         {"path": "/API/MULTIAPI", "convencion": "max"},
         {"path": "/APP/Alertas", "convencion": "max"},
-        {"path": "/API/ALERTAS", "convencion": "max"},
-        {"path": "/APP/Eter", "convencion": "max"},
-        {"path": "/API/GIS", "convencion": "max"},
-        {"path": "/API/PANGEA", "convencion": "max"},
         {"path": "/BUCKETS", "convencion": "max"},
         {"path": "/EMAIL", "convencion": "max"},
         {"path": "/INFERENCIAS/TASA_DMI", "convencion": "max"},
-        {"path": "/IP", "convencion": "max"},
-        {"path": "/TASA", "convencion": "max"},
         {"path": "/CEE/CEXGEN", "convencion": "max"},
+        {"path": "/API/MULTIAPI/*/stan_ai", "convencion": "mixto_max"},
     ]
 ```
 
-Sobre mayúsculas y minúsculas: ParamsX **no renombra ni fuerza el case de los parámetros que ya existen**, los lee y edita tal cual estén según la convención que hayas indicado para esa ruta. Los parámetros **nuevos** que crea la herramienta (opción 4) van siempre en convención `min`.
+Sobre mayúsculas y minúsculas: ParamsX **no renombra ni fuerza el case de los parámetros que ya existen**, los lee y edita tal cual estén. El `case_ruta` del perfil solo entra en juego al crear parámetros nuevos.
+
+### Un fichero por ruta: `fichero_por_ruta`
+
+Al leer una ruta se generan `parameters_{entorno}.py` y su backup. Ese nombre depende solo del entorno, así que si lees una segunda ruta del mismo entorno **machacas el fichero de la primera**. Por defecto ParamsX te avisa y te pide confirmación antes de sobrescribir.
+
+Si trabajas a menudo con varias rutas del mismo entorno, pon `fichero_por_ruta = True`: cada entrada pasa a tener su propio fichero y dejan de pisarse. Al cargar los verás todos en la lista y eliges cuál aplicar.
+
+En el nombre van el entorno, la ruta y el perfil, porque dos entradas pueden compartir la ruta declarada y apuntar a sitios distintos:
+
+| Entrada | Fichero |
+|---|---|
+| `{"path": "/API/STA", "convencion": "max"}` | `parameters_dev__API_STA__max.py` |
+| `{"path": "/API/*/STA", "convencion": "mixto_max"}` | `parameters_dev__API_env_STA__mixto_max.py` |
 
 ### Cómo acotar tu parameter_list (recomendación)
 
@@ -184,22 +244,24 @@ Sobre mayúsculas y minúsculas: ParamsX **no renombra ni fuerza el case de los 
 
 Si configuras una ruta más amplia que tus permisos, no pasa nada grave: ParamsX te avisará con un mensaje claro de acceso denegado en vez de una traza de boto3. Pero afinar la ruta te ahorra el error.
 
-### Tags obligatorias y el flag `abac`
+### Tags obligatorias y el flag `tags_activas`
 
-El control de acceso a los valores privados de la cuenta va por **tags IAM** (condición `aws:ResourceTag/${TagKey}` sobre `GetParameter`), no por restricción de path — la única excepción es `/{entorno}/common/*`, que se concede por prefijo de ruta. Por eso estas 8 tags son el mínimo no negociable: son las que sostienen todo el modelo ABAC de la cuenta AWS.
+En nuestra cuenta, el control de acceso a los valores privados va por **tags IAM** (condición `aws:ResourceTag/${TagKey}` sobre `GetParameter`), no por restricción de path — la única excepción es `/{entorno}/common/*`, que se concede por prefijo de ruta. Por eso estas 8 tags son ahí el mínimo no negociable: son las que sostienen todo el modelo ABAC.
 
 ```
 Application, Environment, Owner, Project, Product, Service, Component, ManagedBy
 ```
 
-La lista vive en `tags_obligatorias`, dentro de tu propio `paramsx_config.py`, para poder ampliarla sin tocar código.
+La lista vive en `tags_obligatorias`, dentro de tu propio `paramsx_config.py`: es libre, pon las que use tu organización.
 
-El flag `abac` decide si ParamsX gestiona tags:
+El flag `tags_activas` decide si ParamsX gestiona tags:
 
-- **`abac = True`**: al leer parámetros, el fichero exportado incluye un campo por tag con su valor actual en AWS (vacío si el parámetro es legacy y no la tiene). Al cargar, es **obligatorio** que las 8 tengan valor.
-- **`abac = False`**: las tags no aparecen en el fichero exportado en absoluto y no se valida nada (comportamiento de la 1.x).
+- **`tags_activas = True`**: al leer parámetros, el fichero exportado incluye un campo por tag con su valor actual en AWS (vacío si el parámetro es legacy y no la tiene). Al cargar, es **obligatorio** que todas tengan valor.
+- **`tags_activas = False`**: las tags no aparecen en el fichero exportado en absoluto y no se valida nada (comportamiento de la 1.x).
 
-Formato del fichero exportado con `abac = True`:
+Este flag se llamaba `abac` en la 2.0 y la 2.1. El nombre viejo se sigue aceptando, así que no tienes que tocar tu configuración, pero `tags_activas` describe lo que hace de verdad: activar la gestión de tags. Que esas tags sostengan un modelo ABAC es el motivo por el que tú las quieres, no lo que hace el flag.
+
+Formato del fichero exportado con `tags_activas = True`:
 
 ```python
 parametros = [
@@ -221,7 +283,7 @@ Este formato con tags **solo existe en el fichero temporal que genera ParamsX**:
 
 #### `obligatorias_vacias`: cuando alguna tag tiene que ir vacía
 
-En la práctica hay parámetros a los que no les aplica alguna de las 8 tags. Ese caso se controla con `obligatorias_vacias`, y solo tiene efecto si `abac = True`:
+En la práctica hay parámetros a los que no les aplica alguna de las 8 tags. Ese caso se controla con `obligatorias_vacias`, y solo tiene efecto si `tags_activas = True`:
 
 | `obligatorias_vacias` | Comportamiento |
 |---|---|
@@ -230,14 +292,14 @@ En la práctica hay parámetros a los que no les aplica alguna de las 8 tags. Es
 
 Ojo con la diferencia entre "vacía" y "borrada": con `obligatorias_vacias = True`, una tag que se deja en blanco y **nunca existió** simplemente no se crea; pero si esa tag **ya tenía valor en AWS** y la vacías en el fichero, se interpreta como que quieres borrarla y se elimina del parámetro. Es la forma de quitar una tag.
 
-Detalles del comportamiento con `abac = True`:
+Detalles del comportamiento con `tags_activas = True`:
 
-- La validación es **por parámetro**, no global: con `obligatorias_vacias = False`, si a uno le falta cualquiera de las 8 tags no se sube ni su valor ni sus tags, y verás un error indicando qué tags faltan y a qué `parameter_name`. El resto de parámetros del fichero que estén completos se suben con normalidad.
+- La validación es **por parámetro**, no global: con `obligatorias_vacias = False`, si a uno le falta cualquiera de las tags obligatorias no se sube ni su valor ni sus tags, y verás un error indicando qué tags faltan y a qué `parameter_name`. El resto de parámetros del fichero que estén completos se suben con normalidad.
 - Cuando una carga queda a medias, los ficheros `parameters_{entorno}.py` y su backup **no se borran**, para que corrijas lo que falta y vuelvas a cargar. El backup se resincroniza con lo ya aplicado, así que la segunda pasada solo sube lo que quedó pendiente.
 - Si el parámetro ya existe y le faltan tags (creado antes de esta versión), se rellenan en este mismo flujo de edición, sin borrar ni recrear el parámetro.
 - Los cambios de tags se aplican con `add_tags_to_resource` / `remove_tags_from_resource` en la misma pasada que el valor. Vaciar el campo de una tag en el fichero equivale a borrarla en AWS.
 - Las tags de sistema (`aws:*`) no se exportan ni se tocan. Las tags que ya existan en AWS y no estén en la lista obligatoria se conservan y se pueden editar.
-- No hay forma de saltarse la validación por parámetro salvo relajarla explícitamente en tu configuración con `obligatorias_vacias = True`, o desactivar las tags por completo con `abac = False`.
+- No hay forma de saltarse la validación por parámetro salvo relajarla explícitamente en tu configuración con `obligatorias_vacias = True`, o desactivar las tags por completo con `tags_activas = False`.
 
 #### Configuración manual del PATH
 En algunos sistemas (especialmente en entornos corporativos como Windows), el PATH puede no configurarse automáticamente durante la instalación. Si ocurre esto, sigue los pasos según tu sistema operativo:
@@ -277,13 +339,13 @@ El programa mostrará un menú donde Podrás:
 - Crear un parámetro nuevo.
 
 ### Leer Parámetros:
-1. Selecciona la opción "Leer parámetros" en el menú. La lista muestra cada ruta con su convención, por ejemplo `/rds  [min]` o `/API/STA  [max]`.
+1. Selecciona la opción "Leer parámetros" en el menú. La lista muestra cada ruta con su perfil de naming, por ejemplo `/rds  [min]` o `/API/STA  [max]`.
 2. Elige el prefijo y el entorno que deseas consultar.
 3. Los parámetros serán descargados y guardados en archivos como:
     - parameters_dev.py
     - parameters_dev_backup.py
     ```Importante: Los archivos se generarán en la misma ruta desde donde ejecutes el comando paramsx```
-4. Edita el archivo parameters_{entorno}.py con tu software favorito. Con `abac = True` cada parámetro trae además sus 8 campos de tag para rellenar.
+4. Edita el archivo parameters_{entorno}.py con tu software favorito. Con `tags_activas = True` cada parámetro trae además un campo por cada tag obligatoria para rellenar.
 
 ### Cargar Parámetros:
 1. Modifica los archivos generados (parameters_dev.py).
@@ -298,9 +360,9 @@ El programa mostrará un menú donde Podrás:
 
 ### Crear un parámetro nuevo:
 1. Selecciona la opción "Crear nuevo parámetro" y elige el entorno.
-2. Escribe la ruta completa en convención `min` (`/dev/...`): se fuerza a minúscula y se valida que el primer segmento sea el entorno.
+2. Escribe la ruta **sin el entorno**, como en tu `parameter_list`: ParamsX le aplica el perfil de `convencion_nuevos` y te enseña la ruta resultante en AWS para que la confirmes.
 3. Escribe el valor: texto plano o JSON en una línea.
-4. Rellena las tags obligatorias (si `abac = True`). `Environment` viene precargada con el entorno elegido. Con `obligatorias_vacias = True` puedes dejar alguna en blanco pulsando Enter: esas no se crearán en AWS.
+4. Rellena las tags obligatorias (si `tags_activas = True`). `Environment` viene precargada con el entorno elegido. Con `obligatorias_vacias = True` puedes dejar alguna en blanco pulsando Enter: esas no se crearán en AWS.
 5. Confirma en la pantalla de resumen. Si es un parámetro de RDS y falta su contraparte (común o privado), verás el aviso de correlación de naming ahí mismo.
 
 ### Backup Parámetros:

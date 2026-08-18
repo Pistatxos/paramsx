@@ -15,6 +15,9 @@ from .funcions import (
     AccessDeniedError, build_full_path, etiqueta_entrada, agregar_tags_a_parametros,
     validar_tags_obligatorias, aplicar_cambios_tags, check_rds_correlacion,
     show_report, prompt_input, indexar_parametros, indice_a_parametros,
+    ficheros_cargables,
+    POSICIONES_ENTORNO, CASES_ENTORNO, CASES_RUTA, MARCADOR_ENTORNO, slug_entrada,
+    aplicar_case_ruta,
 )
 
 
@@ -24,27 +27,24 @@ CONFIG_PATH = os.path.expanduser("~/.xsoft/paramsx_config.py")
 # Ruta de la plantilla que se copia con 'paramsx configure'
 PLANTILLA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paramsx_config.py")
 
-CONVENCIONES = ("min", "max")
-
 MENSAJE_MIGRACION = """BREAKING CHANGE en la configuración de ParamsX
 ------------------------------------------------
 'parameter_list' ya no es una lista de strings: ahora cada entrada es un diccionario
-con su convención de naming. Edita a mano ~/.xsoft/paramsx_config.py:
+que declara qué perfil de naming usa. Edita a mano ~/.xsoft/paramsx_config.py:
 
     "entornos": ['dev', 'pre', 'prod'],   # SIEMPRE en minúscula
     "parameter_list": [
         {"path": "/common",   "convencion": "min"},   # /common   + dev -> /dev/common
         {"path": "/rds",      "convencion": "min"},   # /rds      + dev -> /dev/rds
         {"path": "/EMAIL",    "convencion": "max"},   # /EMAIL    + dev -> /EMAIL/DEV
-        {"path": "/API/STA",  "convencion": "max"},   # /API/STA  + dev -> /API/DEV/STA
+        {"path": "/API/STA",  "convencion": "max"},   # /API/STA  + dev -> /API/STA/DEV
     ]
 
-- convencion "min": convención nueva, el entorno en minúscula va SIEMPRE primero.
-- convencion "max": convención legacy, el entorno en mayúscula se inserta tras el
-  primer segmento de la ruta.
+Los perfiles se definen en el diccionario 'naming' del mismo fichero, con la posición
+y el case del entorno. 'min' y 'max' vienen predefinidos en la plantilla.
 
-Ya no existe 'entornos_old': el entorno en mayúscula de las rutas "max" se deriva
-de la misma lista 'entornos'."""
+Ya no existe 'entornos_old': el entorno se escribe a partir de la lista 'entornos',
+que va siempre en minúscula, aplicándole el 'case_entorno' del perfil."""
 
 
 # Cargar configuraciones desde el archivo de usuario
@@ -56,15 +56,25 @@ def load_config():
     spec.loader.exec_module(modulo)
 
     config = dict(modulo.configuraciones)
-    # 'abac', 'obligatorias_vacias' y 'tags_obligatorias' son opcionales en el fichero del
-    # usuario: si no están, se usan los valores de la plantilla que trae el paquete.
-    config["abac"] = bool(getattr(modulo, "abac", plantilla_config.abac))
+    # Todo lo que va fuera de 'configuraciones' es opcional en el fichero del usuario:
+    # si no está, se usa el valor de la plantilla que trae el paquete.
+    config["naming"] = dict(getattr(modulo, "naming", plantilla_config.naming))
+    # 'abac' es el nombre antiguo (2.0/2.1) de 'tags_activas': se sigue aceptando.
+    config["tags_activas"] = bool(
+        getattr(modulo, "tags_activas", getattr(modulo, "abac", plantilla_config.tags_activas))
+    )
     config["obligatorias_vacias"] = bool(
         getattr(modulo, "obligatorias_vacias", plantilla_config.obligatorias_vacias)
     )
     config["tags_obligatorias"] = list(
         getattr(modulo, "tags_obligatorias", plantilla_config.tags_obligatorias)
     )
+    config["fichero_por_ruta"] = bool(
+        getattr(modulo, "fichero_por_ruta", plantilla_config.fichero_por_ruta)
+    )
+    # Si no se declara, los parámetros nuevos usan el primer perfil definido
+    primer_perfil = next(iter(config["naming"]), None)
+    config["convencion_nuevos"] = getattr(modulo, "convencion_nuevos", None) or primer_perfil
     return config
 
 
@@ -87,6 +97,23 @@ def validate_config(config):
     elif "entornos" in config:
         errores.append("'entornos' debe ser una lista no vacía de entornos en minúscula.")
 
+    naming = config.get("naming")
+    if not isinstance(naming, dict) or not naming:
+        errores.append(
+            "'naming' debe ser un diccionario con al menos un perfil "
+            "(ver la plantilla en el propio fichero de configuración)."
+        )
+        naming = {}
+    else:
+        errores.extend(validar_naming(naming))
+
+    convencion_nuevos = config.get("convencion_nuevos")
+    if naming and convencion_nuevos not in naming:
+        errores.append(
+            f"'convencion_nuevos' apunta a un perfil que no existe: {convencion_nuevos!r}. "
+            f"Perfiles definidos en 'naming': {', '.join(sorted(naming))}."
+        )
+
     parameter_list = config.get("parameter_list")
     if not isinstance(parameter_list, (list, tuple)) or not parameter_list:
         if "parameter_list" in config:
@@ -105,14 +132,100 @@ def validate_config(config):
         convencion = entrada.get("convencion")
         if not isinstance(path, str) or not path.strip("/"):
             errores.append(f"'path' inválido o vacío en parameter_list: {entrada!r}")
-        elif not path.startswith("/"):
+            continue
+        if not path.startswith("/"):
             errores.append(f"El 'path' debe empezar por '/': {path!r}")
-        if convencion not in CONVENCIONES:
+        if convencion not in naming:
             errores.append(
-                f"'convencion' inválida en {path!r}: {convencion!r}. Usa 'min' o 'max'."
+                f"'convencion' inválida en {path!r}: {convencion!r}. "
+                f"Perfiles definidos en 'naming': {', '.join(sorted(naming)) or '(ninguno)'}."
             )
+            continue
+        errores.extend(validar_marcador(path, convencion, naming[convencion]))
+
+    # Dos entradas que resuelvan a la misma ruta no rompen nada, pero duplican trabajo
+    # y confunden en el menú, así que se avisa.
+    vistas = {}
+    entornos_muestra = config.get("entornos") or ["dev"]
+    for entrada in parameter_list:
+        perfil = naming.get(entrada.get("convencion")) if isinstance(entrada, dict) else None
+        if not isinstance(perfil, dict):
+            continue
+        try:
+            resuelta = build_full_path(entrada["path"], perfil, str(entornos_muestra[0]).lower())
+        except ValueError:
+            continue
+        anterior = vistas.get(resuelta)
+        if anterior and anterior != entrada["path"]:
+            avisos.append(
+                f"Aviso: '{anterior}' y '{entrada['path']}' resuelven a la misma ruta "
+                f"({resuelta}). Aparecerán dos veces en el menú."
+            )
+        vistas.setdefault(resuelta, entrada["path"])
 
     return errores, avisos
+
+
+# Validar los perfiles de naming. Devuelve la lista de errores.
+def validar_naming(naming):
+    errores = []
+    for nombre, perfil in naming.items():
+        if not isinstance(perfil, dict):
+            errores.append(f"El perfil de naming {nombre!r} debe ser un diccionario.")
+            continue
+
+        posicion = perfil.get("posicion_entorno")
+        if posicion not in POSICIONES_ENTORNO:
+            errores.append(
+                f"'posicion_entorno' inválida en el perfil {nombre!r}: {posicion!r}. "
+                f"Usa una de: {', '.join(POSICIONES_ENTORNO)}."
+            )
+
+        case_entorno = perfil.get("case_entorno", "lower")
+        if case_entorno not in CASES_ENTORNO:
+            errores.append(
+                f"'case_entorno' inválido en el perfil {nombre!r}: {case_entorno!r}. "
+                f"Usa uno de: {', '.join(CASES_ENTORNO)}."
+            )
+
+        case_ruta = perfil.get("case_ruta", "ninguno")
+        if case_ruta not in CASES_RUTA:
+            errores.append(
+                f"'case_ruta' inválido en el perfil {nombre!r}: {case_ruta!r}. "
+                f"Usa uno de: {', '.join(CASES_RUTA)}."
+            )
+
+    return errores
+
+
+# El marcador '*' y la posición del perfil tienen que contar la misma historia: si no,
+# la ruta se construye mal y SSM devuelve cero parámetros sin decir por qué.
+def validar_marcador(path, convencion, perfil):
+    segmentos = [s for s in path.strip("/").split("/") if s]
+    marcadores = segmentos.count(MARCADOR_ENTORNO)
+    posicion = perfil.get("posicion_entorno")
+
+    if any(MARCADOR_ENTORNO in s and s != MARCADOR_ENTORNO for s in segmentos):
+        return [
+            f"En {path!r} el '{MARCADOR_ENTORNO}' debe ser un segmento entero "
+            f"(/API/{MARCADOR_ENTORNO}/STA), no parte de un segmento."
+        ]
+
+    if posicion == "mixto" and marcadores != 1:
+        return [
+            f"La ruta {path!r} usa el perfil {convencion!r} ('mixto') y debe llevar "
+            f"exactamente un '{MARCADOR_ENTORNO}' que marque dónde va el entorno "
+            f"(tiene {marcadores})."
+        ]
+
+    if posicion != "mixto" and marcadores:
+        return [
+            f"La ruta {path!r} lleva un '{MARCADOR_ENTORNO}' pero su perfil {convencion!r} "
+            f"tiene posicion_entorno='{posicion}', que ya decide dónde va el entorno. "
+            "Usa un perfil 'mixto' o quita el marcador."
+        ]
+
+    return []
 
 
 # Normalizar la configuración ya validada
@@ -125,8 +238,18 @@ def normalize_config(config):
     return config
 
 
-# Leer parámetros (y sus tags si abac) de una ruta ya construida
-def leer_ruta(stdscr, ssm, full_path, abac, tags_obligatorias):
+# Nombres del fichero exportado y de su backup. Los usan por igual la lectura (opción 1)
+# y la carga (opción 2): si no coincidieran, la carga no encontraría lo que acaba de leer.
+# Con fichero_por_ruta cada entrada tiene los suyos, así que leer una segunda ruta del
+# mismo entorno no machaca la que estabas editando.
+def nombres_ficheros(entrada, entorno, fichero_por_ruta):
+    sufijo = f"__{slug_entrada(entrada)}" if fichero_por_ruta else ""
+    base = f"parameters_{entorno}{sufijo}"
+    return f"{base}.py", f"{base}_backup.py"
+
+
+# Leer parámetros (y sus tags si tags_activas) de una ruta ya construida
+def leer_ruta(stdscr, ssm, full_path, tags_activas, tags_obligatorias):
     """Devuelve (parametros, avisos) o (None, avisos) si no se pudo leer."""
     try:
         parameters = get_parameters_by_prefix(ssm, full_path)
@@ -138,50 +261,80 @@ def leer_ruta(stdscr, ssm, full_path, abac, tags_obligatorias):
         return None, []
 
     avisos = []
-    if abac:
+    if tags_activas:
         avisos = agregar_tags_a_parametros(ssm, parameters, tags_obligatorias)
 
     return parameters, avisos
 
 
-# Feature 2: crear un parámetro nuevo, siempre en convención "min"
-def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias, obligatorias_vacias=False):
+# Feature 2: crear un parámetro nuevo con el perfil de naming de 'convencion_nuevos'
+def crear_parametro(stdscr, ssm, entornos, perfil, convencion, tags_activas,
+                    tags_obligatorias, obligatorias_vacias=False):
     env_choice = show_environment_selection(stdscr, entornos)
     if env_choice is None:
         return
     entorno = entornos[env_choice].lower()
 
-    # 1. Ruta completa (convención min: entorno primero y todo en minúscula)
-    path = f"/{entorno}/"
+    posicion = perfil.get("posicion_entorno")
+    case_ruta = perfil.get("case_ruta", "ninguno")
+
+    # 1. Ruta SIN el entorno, igual que se declara en parameter_list: el perfil se
+    # encarga de colocarlo. Así la opción 4 funciona con cualquier convención.
+    ayudas = {
+        "inicio": "El entorno se añade delante. Ej: /common/rds/cee-dev/host -> "
+                  f"/{entorno}/common/rds/cee-dev/host",
+        "final": "El entorno se añade al final. Ej: /API/STA/token -> "
+                 f"/API/STA/token/{entorno.upper()}",
+        "mixto": f"Escribe un '{MARCADOR_ENTORNO}' donde vaya el entorno. "
+                 f"Ej: /API/{MARCADOR_ENTORNO}/STA/token",
+        "ninguno": "Este perfil no añade entorno: la ruta se crea tal cual la escribas.",
+    }
+    path = ""
     while True:
         path = prompt_input(
             stdscr,
-            "Crear nuevo parámetro (1/3): ruta",
-            f"Ruta completa del parámetro (convención min, empieza por /{entorno}/):",
+            "Crear nuevo parámetro (1/4): ruta",
+            f"Ruta del parámetro (convención '{convencion}', sin el entorno):",
             valor=path,
-            ayuda="Ej: /{e}/common/rds/cee-dev/host  ó  /{e}/api/sta/auth/jwt_secret".format(e=entorno),
+            ayuda=ayudas.get(posicion, ""),
         )
         if path is None:
             return
 
-        path = "/" + path.strip().strip("/").lower()
-        segmentos = [s for s in path.strip("/").split("/") if s]
+        path = aplicar_case_ruta("/" + path.strip().strip("/"), case_ruta)
 
-        if len(segmentos) < 2:
-            show_message(stdscr, "La ruta necesita al menos /entorno/algo.", 2)
+        segmentos = [s for s in path.strip("/").split("/") if s]
+        if not segmentos:
+            show_message(stdscr, "La ruta no puede estar vacía.", 2)
             continue
-        if segmentos[0] != entorno:
-            show_message(stdscr, f"El primer segmento debe ser el entorno '{entorno}'.", 2)
-            path = f"/{entorno}/" + "/".join(segmentos[1:])
+
+        problemas = validar_marcador(path, convencion, perfil)
+        if problemas:
+            show_message(stdscr, problemas[0], 2)
             continue
         break
+
+    # La ruta real en AWS, ya con el entorno colocado por el perfil
+    path_declarado = path
+    path = build_full_path(path_declarado, perfil, entorno)
+
+    if not show_report(
+        stdscr, "Crear nuevo parámetro (2/4): confirmar la ruta",
+        [f"Convención: {convencion}",
+         f"Escrita:    {path_declarado}",
+         f"En AWS:     {path}",
+         "",
+         "¿La ruta es correcta?"],
+        color_pair=3, confirmar=True,
+    ):
+        return
 
     # 2. Valor (string plano o JSON)
     valor = ""
     while True:
         valor = prompt_input(
             stdscr,
-            "Crear nuevo parámetro (2/3): valor",
+            "Crear nuevo parámetro (3/4): valor",
             f"Valor para {path}:",
             valor=valor,
             ayuda='Texto plano o JSON en una línea, ej: {"host": "x", "user": "y", "pass": "z"}',
@@ -201,7 +354,7 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias, obligatorias
     # 3. Tags obligatorias
     tags = {}
     faltantes = []
-    if abac:
+    if tags_activas:
         if obligatorias_vacias:
             ayuda_tags = ("Las tags sostienen el control de acceso ABAC vía IAM. "
                           "Puedes dejarla vacía: si no tiene valor no se creará en AWS.")
@@ -212,7 +365,7 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias, obligatorias
             predeterminado = entorno if clave == "Environment" else ""
             respuesta = prompt_input(
                 stdscr,
-                f"Crear nuevo parámetro (3/3): tags [{indice}/{len(tags_obligatorias)}]",
+                f"Crear nuevo parámetro (4/4): tags [{indice}/{len(tags_obligatorias)}]",
                 f"Valor de la tag obligatoria '{clave}':",
                 valor=predeterminado,
                 permitir_vacio=obligatorias_vacias,
@@ -240,7 +393,7 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias, obligatorias
 
     # Resumen y confirmación
     lineas = [f"Ruta:   {path}", f"Valor:  {valor[:120]}", "Tipo:   SecureString", ""]
-    if abac:
+    if tags_activas:
         lineas.append("Tags:")
         lineas.extend([f"  {clave} = {valor_tag}" for clave, valor_tag in tags.items()])
         if faltantes:
@@ -262,7 +415,7 @@ def crear_parametro(stdscr, ssm, entornos, abac, tags_obligatorias, obligatorias
         "Type": "SecureString",
         "Overwrite": False,
     }
-    if abac and tags:
+    if tags_activas and tags:
         kwargs["Tags"] = [{"Key": k, "Value": v} for k, v in tags.items()]
 
     try:
@@ -313,10 +466,15 @@ def main(stdscr, config=None):
 
     environments = config['entornos']
     PARAMETER_LIST = config['parameter_list']
-    ABAC = config['abac']
+    NAMING = config['naming']
+    TAGS_ACTIVAS = config['tags_activas']
     TAGS_OBLIGATORIAS = config['tags_obligatorias']
     OBLIGATORIAS_VACIAS = config.get('obligatorias_vacias', False)
+    FICHERO_POR_RUTA = config.get('fichero_por_ruta', False)
+    CONVENCION_NUEVOS = config.get('convencion_nuevos')
 
+    # Nombre del fichero exportado: con fichero_por_ruta cada ruta tiene el suyo, así que
+    # leer una segunda ruta del mismo entorno no machaca lo que estabas editando.
     while True:
         # Usar el menú con navegación por flechas
         choice_idx = show_main_menu_selection(stdscr)
@@ -339,25 +497,37 @@ def main(stdscr, config=None):
 
             selected_env = environments[env_choice]
 
-            # Crear el prefijo completo según la convención de la entrada
+            # Crear el prefijo completo según el perfil de naming de la entrada
             full_path = build_full_path(
-                selected_param["path"], selected_param["convencion"], selected_env
+                selected_param["path"], NAMING[selected_param["convencion"]], selected_env
             )
             show_message(stdscr, f"Buscando parámetros en: {full_path}...", 3)  # Mensaje inicial
 
-            parameters, avisos = leer_ruta(stdscr, ssm, full_path, ABAC, TAGS_OBLIGATORIAS)
+            parameters, avisos = leer_ruta(stdscr, ssm, full_path, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
             if not parameters:
                 continue  # Regresar al menú principal
 
             # Crear archivos si se encontraron parámetros
-            file_name = f"parameters_{selected_env}.py"
-            backup_file_name = f"parameters_{selected_env}_backup.py"
+            file_name, backup_file_name = nombres_ficheros(
+                selected_param, selected_env, FICHERO_POR_RUTA
+            )
+
+            if os.path.exists(file_name):
+                aviso = [f"Ya existe {file_name} de una lectura anterior.",
+                         "Si tenías cambios sin cargar, se van a perder."]
+                if not FICHERO_POR_RUTA:
+                    aviso += ["",
+                              "Con 'fichero_por_ruta = True' en tu configuración cada entrada "
+                              "de parameter_list usa su propio fichero y dejan de pisarse."]
+                if not show_report(stdscr, "El fichero ya existe", aviso,
+                                   color_pair=2, confirmar=True):
+                    continue
 
             # Exportar parámetros al archivo principal
-            export_parameters_to_file(parameters, file_name, ABAC, TAGS_OBLIGATORIAS)
+            export_parameters_to_file(parameters, file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
 
             # Crear un respaldo exacto del archivo principal (valores y tags)
-            export_parameters_to_file(parameters, backup_file_name, ABAC, TAGS_OBLIGATORIAS)
+            export_parameters_to_file(parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
 
             # Confirmación de archivos creados
             lineas = [
@@ -367,7 +537,7 @@ def main(stdscr, config=None):
                 f"- {file_name}",
                 f"- {backup_file_name}",
             ]
-            if ABAC:
+            if TAGS_ACTIVAS:
                 lineas.extend([
                     "",
                     f"Tags obligatorias a rellenar: {', '.join(TAGS_OBLIGATORIAS)}",
@@ -378,18 +548,30 @@ def main(stdscr, config=None):
             show_report(stdscr, "Parámetros exportados", lineas, color_pair=3)
 
         elif choice == 2:
-            # Cargar parámetros desde archivo
-            env_choice = show_environment_selection(stdscr, environments)
-            if env_choice is None:  # Si se presionó Esc
+            # Cargar parámetros desde archivo: se eligen entre los que hay de verdad en
+            # el directorio, no entre las rutas de la parameter_list. Con fichero_por_ruta
+            # habrá varios y el nombre ya dice de qué ruta y entorno es cada uno.
+            cargables = ficheros_cargables()
+            if not cargables:
+                show_report(
+                    stdscr, "No hay nada que cargar",
+                    ["No se ha encontrado ningún fichero de parámetros con su backup "
+                     "en este directorio.",
+                     "",
+                     "Usa antes 'Leer parámetros', o ejecuta paramsx desde la carpeta "
+                     "donde tengas los ficheros exportados."],
+                    color_pair=2,
+                )
+                continue
+
+            fichero_choice = show_parameter_selection(
+                stdscr, [n for n, _ in cargables],
+                titulo="Seleccione el fichero que quiere cargar:",
+            )
+            if fichero_choice is None:  # Si se presionó Esc
                 continue  # Regresar al menú principal
 
-            selected_env = environments[env_choice]
-            file_name = f"parameters_{selected_env}.py"
-            backup_file_name = f"parameters_{selected_env}_backup.py"
-
-            if not os.path.exists(file_name) or not os.path.exists(backup_file_name):
-                show_message(stdscr, f"Archivos {file_name} o {backup_file_name} no encontrados.", 2)
-                continue
+            file_name, backup_file_name = cargables[fichero_choice]
 
             try:
                 # Cargar parámetros del archivo principal
@@ -398,8 +580,8 @@ def main(stdscr, config=None):
                 show_message(stdscr, f"ERROR: {e}", 2)
                 continue  # Regresar al menú principal
 
-            # Comparar los parámetros (valores y, si abac, también tags)
-            changes = compare_parameters(file_name, backup_file_name, stdscr, ABAC)
+            # Comparar los parámetros (valores y, si tags_activas, también tags)
+            changes = compare_parameters(file_name, backup_file_name, stdscr, TAGS_ACTIVAS)
 
             if not changes:
                 show_message(stdscr, "No se encontraron cambios entre los archivos.", 3)
@@ -421,7 +603,7 @@ def main(stdscr, config=None):
                 tipo = change["tipo"]
 
                 if tipo in ("Nuevo", "Modificado"):
-                    if ABAC:
+                    if TAGS_ACTIVAS:
                         faltantes = validar_tags_obligatorias(change["tags"], TAGS_OBLIGATORIAS)
                         if faltantes and not OBLIGATORIAS_VACIAS:
                             # Validación bloqueante por parámetro: sin las tags no se sube nada
@@ -492,7 +674,7 @@ def main(stdscr, config=None):
                             "tags": change["tags"],
                         }
                 export_parameters_to_file(
-                    indice_a_parametros(indice), backup_file_name, ABAC, TAGS_OBLIGATORIAS
+                    indice_a_parametros(indice), backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
                 )
 
                 lineas.extend(["", f"Errores ({len(errores)}):"])
@@ -517,7 +699,9 @@ def main(stdscr, config=None):
             etiquetas = [etiqueta_entrada(e) for e in PARAMETER_LIST]
             etiquetas = etiquetas + [OPCION_LISTADOS, OPCION_CUENTA]
 
-            param_choice = show_parameter_selection(stdscr, etiquetas)
+            param_choice = show_parameter_selection(
+                stdscr, etiquetas, titulo="Seleccione qué quiere respaldar:"
+            )
             if param_choice is None:  # Si se presionó Esc
                 continue  # Regresar al menú principal
 
@@ -527,7 +711,9 @@ def main(stdscr, config=None):
                 avisos_totales = []
                 for entrada in PARAMETER_LIST:
                     for env in environments:
-                        full_path = build_full_path(entrada["path"], entrada["convencion"], env)
+                        full_path = build_full_path(
+                            entrada["path"], NAMING[entrada["convencion"]], env
+                        )
                         try:
                             # Obtener parámetros desde AWS SSM
                             parameters = get_parameters_by_prefix(ssm, full_path)
@@ -538,7 +724,7 @@ def main(stdscr, config=None):
                             # Ruta sin parámetros para ese entorno: se ignora en el backup total
                             continue
 
-                        if ABAC:
+                        if TAGS_ACTIVAS:
                             avisos_totales.extend(
                                 agregar_tags_a_parametros(ssm, parameters, TAGS_OBLIGATORIAS)
                             )
@@ -547,7 +733,7 @@ def main(stdscr, config=None):
                 # Crear archivo de backup total listado
                 backup_file_name = "total_listed_parameters_backup.py"
                 export_parameters_to_file(
-                    all_parameters, backup_file_name, ABAC, TAGS_OBLIGATORIAS
+                    all_parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
                 )
 
                 # Confirmación de backup creado
@@ -562,14 +748,14 @@ def main(stdscr, config=None):
 
             elif etiquetas[param_choice] == OPCION_CUENTA:
                 # Obtener todos los parámetros desde AWS SSM
-                parameters, avisos = leer_ruta(stdscr, ssm, "/", ABAC, TAGS_OBLIGATORIAS)
+                parameters, avisos = leer_ruta(stdscr, ssm, "/", TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
                 if not parameters:
                     continue  # Regresar al menú principal
 
                 # Crear archivo de backup de todos los parámetros
                 backup_file_name = "all_parameters_backup.py"
                 export_parameters_to_file(
-                    parameters, backup_file_name, ABAC, TAGS_OBLIGATORIAS
+                    parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
                 )
                 lineas = [
                     f"Backup de todos los parámetros creado: {backup_file_name}",
@@ -590,20 +776,19 @@ def main(stdscr, config=None):
 
                 selected_env = environments[env_choice]
 
-                # Crear el prefijo completo según la convención de la entrada
+                # Crear el prefijo completo según el perfil de naming de la entrada
                 full_path = build_full_path(
-                    selected_param["path"], selected_param["convencion"], selected_env
+                    selected_param["path"], NAMING[selected_param["convencion"]], selected_env
                 )
 
-                parameters, avisos = leer_ruta(stdscr, ssm, full_path, ABAC, TAGS_OBLIGATORIAS)
+                parameters, avisos = leer_ruta(stdscr, ssm, full_path, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
                 if not parameters:
                     continue  # Regresar al menú principal
 
                 # Crear archivo de backup con nombre claro
-                prefijo_fichero = selected_param["path"].strip("/").replace("/", "_")
-                backup_file_name = f"{prefijo_fichero}_{selected_env}_backup.py"
+                backup_file_name = f"{slug_entrada(selected_param)}_{selected_env}_backup.py"
                 export_parameters_to_file(
-                    parameters, backup_file_name, ABAC, TAGS_OBLIGATORIAS
+                    parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
                 )
 
                 # Confirmación de backup creado
@@ -618,9 +803,10 @@ def main(stdscr, config=None):
                 show_report(stdscr, "Backup creado", lineas, color_pair=3)
 
         elif choice == 4:
-            # Crear nuevo parámetro (siempre en convención "min")
+            # Crear nuevo parámetro con el perfil declarado en 'convencion_nuevos'
             crear_parametro(
-                stdscr, ssm, environments, ABAC, TAGS_OBLIGATORIAS, OBLIGATORIAS_VACIAS
+                stdscr, ssm, environments, NAMING[CONVENCION_NUEVOS], CONVENCION_NUEVOS,
+                TAGS_ACTIVAS, TAGS_OBLIGATORIAS, OBLIGATORIAS_VACIAS
             )
 
         else:
@@ -654,14 +840,25 @@ Opciones del menú:
   1. Leer parámetros              Exporta a un fichero editable los parámetros de una ruta.
   2. Cargar parámetros            Compara el fichero editado y aplica los cambios en AWS.
   3. Crear Backup de parámetros   Respalda una ruta, la lista completa o toda la cuenta.
-  4. Crear nuevo parámetro        Crea un parámetro nuevo (siempre en convención 'min').
+  4. Crear nuevo parámetro        Crea un parámetro nuevo con el perfil 'convencion_nuevos'.
 
 Configuración (~/.xsoft/paramsx_config.py):
-  parameter_list    Lista de dicts {"path": "/rds", "convencion": "min"|"max"}.
-                    'min' -> /dev/rds        (entorno en minúscula, primero)
-                    'max' -> /API/DEV/STA    (entorno en mayúscula, tras el 1er segmento)
-  abac              True para gestionar las tags obligatorias en el fichero exportado.
-  tags_obligatorias Tags que sostienen el control de acceso ABAC vía IAM.
+  naming            Perfiles de naming. Cada uno dice dónde va el entorno en la ruta
+                    y cómo se escribe. Los nombres los eliges tú:
+                      posicion_entorno  'inicio'  /rds       -> /dev/rds
+                                        'final'   /API/STA   -> /API/STA/DEV
+                                        'mixto'   /API/*/STA -> /API/dev/STA
+                                        'ninguno' /api/auth  -> /api/auth
+                      case_entorno      'lower' | 'upper' | 'capitalize'
+                      case_ruta         'lower' | 'upper' | 'capitalize' | 'ninguno'
+                                        (solo al crear parámetros)
+  parameter_list    Lista de dicts {"path": "/rds", "convencion": "<perfil de naming>"}.
+  convencion_nuevos Perfil que usan los parámetros creados con la opción 4.
+  fichero_por_ruta  True -> el fichero exportado incluye la ruta en su nombre, para
+                    que leer otra ruta del mismo entorno no machaque la anterior.
+  tags_activas      True para gestionar las tags en el fichero exportado y validarlas.
+                    (antes se llamaba 'abac'; ese nombre se sigue aceptando)
+  tags_obligatorias Tags exigidas en cada parámetro cuando tags_activas = True.
   obligatorias_vacias  False -> no se sube un parámetro al que le falte alguna tag.
                        True  -> se permite dejarlas vacías; las tags sin valor
                                 no se crean en AWS.
