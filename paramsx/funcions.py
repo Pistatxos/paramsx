@@ -161,7 +161,10 @@ def get_parameters_by_prefix(ssm, prefix):
         for param in response.get('Parameters', []):
             parameters.append({
                 "parameter_name": param['Name'],
-                "parameter_value": param['Value']
+                "parameter_value": param['Value'],
+                # El tipo viene en la misma respuesta que el valor, sin permisos extra.
+                # Solo se usa si forzar_securestring = False.
+                "parameter_type": param.get('Type', "SecureString"),
             })
 
         next_token = response.get('NextToken')
@@ -172,6 +175,61 @@ def get_parameters_by_prefix(ssm, prefix):
         raise ValueError(f"No se encontraron parámetros con el prefijo: {prefix}")
 
     return parameters
+
+
+# Descripciones de los parámetros de una ruta, indexadas por nombre.
+# La descripción NO viene en get_parameters_by_path: hay que pedirla aparte con
+# describe_parameters, que es la que devuelve los metadatos. Eso exige el permiso
+# ssm:DescribeParameters, que no todo el mundo tiene.
+def get_descriptions_by_prefix(ssm, prefix):
+    descripciones = {}
+    next_token = None
+    # Con prefijo "/" (backup de la cuenta entera) no se filtra: se piden todos
+    ruta = prefix.rstrip("/")
+
+    while True:
+        request_args = {"MaxResults": 50}
+        if ruta:
+            request_args["ParameterFilters"] = [
+                {"Key": "Path", "Option": "Recursive", "Values": [ruta]}
+            ]
+        if next_token:
+            request_args["NextToken"] = next_token
+
+        try:
+            response = ssm.describe_parameters(**request_args)
+        except ClientError as e:
+            if _codigo_error(e) == "AccessDeniedException":
+                raise AccessDeniedError(prefix, sugerir_acotar=False) from None
+            raise
+
+        for meta in response.get("Parameters", []):
+            descripciones[meta["Name"]] = meta.get("Description", "")
+
+        next_token = response.get("NextToken")
+        if not next_token:
+            break
+
+    return descripciones
+
+
+# Rellenar cada parámetro con su descripción. Devuelve la lista de avisos.
+# Si no hay permisos, el campo NO se añade al fichero exportado: así al cargar se sabe
+# que las descripciones no se gestionan y no se toca la que haya en AWS.
+def agregar_descripciones_a_parametros(ssm, parameters, prefix):
+    try:
+        descripciones = get_descriptions_by_prefix(ssm, prefix)
+    except AccessDeniedError:
+        for param in parameters:
+            param.pop("parameter_description", None)
+        return [
+            "⚠ Sin permisos para leer las descripciones (hace falta ssm:DescribeParameters): "
+            "no aparecen en el fichero y al cargar no se tocarán las que ya existan en AWS."
+        ]
+
+    for param in parameters:
+        param["parameter_description"] = descripciones.get(param["parameter_name"], "")
+    return []
 
 
 # Comprobar si existe algún parámetro bajo un prefijo (None = no se pudo comprobar por permisos)
@@ -318,7 +376,8 @@ def _orden_tags(param, tags_obligatorias):
 
 
 # Función para exportar parámetros a un archivo
-def export_parameters_to_file(parameters, file_path, tags_activas=False, tags_obligatorias=None):
+def export_parameters_to_file(parameters, file_path, tags_activas=False, tags_obligatorias=None,
+                              incluir_tipo=False):
     tags_obligatorias = tags_obligatorias or []
 
     with open(file_path, 'w') as f:
@@ -328,6 +387,17 @@ def export_parameters_to_file(parameters, file_path, tags_activas=False, tags_ob
             parameter_name = param['parameter_name']
             parameter_value = param['parameter_value']
             f.write(f"    {{'parameter_name': '{parameter_name}',\n")
+
+            # La descripción va debajo del nombre y antes del valor. Solo se escribe si
+            # se ha podido leer de AWS: si falta el campo, la carga no la toca.
+            if "parameter_description" in param:
+                descripcion = _escapar_valor_tag(param.get("parameter_description") or "")
+                f.write(f"     'parameter_description': \"{descripcion}\",\n")
+
+            # El tipo solo se escribe si se respeta (forzar_securestring = False): con
+            # el valor por defecto todo acaba en SecureString y el campo solo confundiría.
+            if incluir_tipo and "parameter_type" in param:
+                f.write(f"     'parameter_type': \"{param['parameter_type']}\",\n")
 
             if not tags_activas:
                 # Usar triple comillas para valores largos
@@ -346,6 +416,10 @@ def indexar_parametros(parametros):
     return {
         p['parameter_name']: {
             "value": p.get('parameter_value', ""),
+            # None (campo ausente) significa "este fichero no gestiona descripciones",
+            # que no es lo mismo que una descripción vacía
+            "description": p.get('parameter_description'),
+            "type": p.get('parameter_type'),
             "tags": extraer_tags(p),
         }
         for p in parametros
@@ -357,6 +431,10 @@ def indice_a_parametros(indice):
     parametros = []
     for nombre, datos in indice.items():
         param = {"parameter_name": nombre, "parameter_value": datos["value"]}
+        if datos.get("description") is not None:
+            param["parameter_description"] = datos["description"]
+        if datos.get("type") is not None:
+            param["parameter_type"] = datos["type"]
         for clave, valor in datos["tags"].items():
             param[f"{TAG_FIELD_PREFIX}{clave}"] = valor
         parametros.append(param)
@@ -416,24 +494,44 @@ def compare_parameters(file_path, backup_file_path, stdscr=None, tags_activas=Fa
                 "tipo": "Nuevo",
                 "detalle": "nuevo parámetro",
                 "value": actual["value"],
+                "description": actual["description"],
+                "type": actual["type"],
                 "tags": actual["tags"],
                 "value_changed": True,
+                "description_changed": actual["description"] is not None,
                 "tags_set": {k: v for k, v in actual["tags"].items() if str(v).strip()},
                 "tags_remove": [],
             })
             continue
 
         value_changed = actual["value"] != anterior["value"]
+        # Solo se compara la descripción si los dos ficheros la traen: si falta en alguno,
+        # es que no se pudo leer de AWS y no se debe tocar
+        description_changed = (
+            actual["description"] is not None
+            and anterior["description"] is not None
+            and actual["description"] != anterior["description"]
+        )
+        type_changed = (
+            actual["type"] is not None
+            and anterior["type"] is not None
+            and actual["type"] != anterior["type"]
+        )
         tags_set, tags_remove = ({}, [])
         if tags_activas:
             tags_set, tags_remove = _diff_tags(actual["tags"], anterior["tags"])
 
-        if not value_changed and not tags_set and not tags_remove:
+        if (not value_changed and not description_changed and not type_changed
+                and not tags_set and not tags_remove):
             continue
 
         detalles = []
         if value_changed:
             detalles.append("valor")
+        if description_changed:
+            detalles.append("descripción")
+        if type_changed:
+            detalles.append(f"tipo: {actual['type']}")
         if tags_set:
             detalles.append(f"tags: {', '.join(sorted(tags_set))}")
         if tags_remove:
@@ -444,8 +542,12 @@ def compare_parameters(file_path, backup_file_path, stdscr=None, tags_activas=Fa
             "tipo": "Modificado",
             "detalle": " | ".join(detalles),
             "value": actual["value"],
+            "description": actual["description"],
+            "type": actual["type"],
             "tags": actual["tags"],
             "value_changed": value_changed,
+            "description_changed": description_changed,
+            "type_changed": type_changed,
             "tags_set": tags_set,
             "tags_remove": tags_remove,
         })
@@ -457,8 +559,12 @@ def compare_parameters(file_path, backup_file_path, stdscr=None, tags_activas=Fa
                 "tipo": "Eliminado",
                 "detalle": "se borrará de AWS",
                 "value": backup_dict[nombre]["value"],
+                "description": backup_dict[nombre]["description"],
+                "type": backup_dict[nombre]["type"],
                 "tags": backup_dict[nombre]["tags"],
                 "value_changed": False,
+                "description_changed": False,
+                "type_changed": False,
                 "tags_set": {},
                 "tags_remove": [],
             })

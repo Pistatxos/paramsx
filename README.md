@@ -50,7 +50,7 @@ Al ejecutar ```paramsx``` desde la terminal, accedes a un menú interactivo con 
 - Navega por la lista de parámetros configurada en tu archivo de configuración y selecciona cuál descargar.
 - Elige el entorno deseado (por ejemplo, dev o prod).
 - Archivos generados:
-    - parameters_dev.py o parameters_prod.py → Edita estos archivos para modificar, añadir o eliminar parámetros (valores y tags).
+    - parameters_dev.py o parameters_prod.py → Edita estos archivos para modificar, añadir o eliminar parámetros (descripciones, valores y tags).
     - parameters_dev_backup.py → Respaldo automático del archivo descargado, incluidas las tags.
 Los archivos se crean en la misma ruta desde donde ejecutas paramsx, evitando movernos innecesariamente entre carpetas.
 - Si tu rol IAM no tiene permisos sobre la ruta configurada, verás un mensaje claro en lugar de una traza de boto3:
@@ -78,6 +78,7 @@ Esto te permitirá mantener respaldos seguros o realizar migraciones/reorganizac
 4. Crear nuevo parámetro
 - Crea un parámetro desde cero sin salir de la herramienta. Te pedirá, en este orden:
     - La ruta **sin el entorno**, igual que la declaras en `parameter_list`: el perfil se encarga de colocarlo. Verás en pantalla la ruta resultante en AWS antes de seguir.
+    - La descripción, opcional: para qué sirve el parámetro. Se guarda en AWS y luego se puede editar en el fichero exportado.
     - El valor: texto plano o JSON en una línea (por ejemplo `{"host": "x", "user": "y", "pass": "z"}`), que se valida antes de continuar.
     - Las tags obligatorias, si tienes `tags_activas = True`.
 - El perfil que se usa es el que declares en `perfil_nuevos`. Si tu perfil es de tipo `mixto`, escribe el `*` en la ruta para indicar dónde va el entorno.
@@ -192,6 +193,16 @@ perfil_nuevos = "min"
 # segunda lectura te machaque el fichero de la primera.
 fichero_por_ruta = False
 
+# ¿Todo lo que sube ParamsX va cifrado como SecureString?
+#   True  (por defecto) -> sí, siempre. Es lo recomendable: los parámetros de una cuenta
+#          suelen tener secretos, y así no depende de acordarse.
+#   False -> se respeta el tipo que ya tuviera el parámetro en AWS (String, StringList o
+#          SecureString): al actualizar no se manda el tipo, así que AWS conserva el suyo.
+#          En este modo el fichero exportado trae además un campo 'parameter_type' que
+#          puedes editar si quieres cambiarlo a propósito. Los parámetros que crees con
+#          la opción 4 se siguen creando como SecureString.
+forzar_securestring = True
+
 
 ## Configuraciones Tags
 
@@ -249,6 +260,38 @@ En el nombre van el entorno, la ruta y el perfil, porque dos entradas pueden com
 | `{"path": "/API/STA", "perfil": "max"}` | `parameters_dev__API_STA__max.py` |
 | `{"path": "/API/*/STA", "perfil": "mixto_max"}` | `parameters_dev__API_env_STA__mixto_max.py` |
 
+### La descripción de los parámetros
+
+El fichero exportado trae un campo `parameter_description` **debajo del nombre y antes del valor**. Se lee de AWS, se edita como cualquier otro campo y se aplica al cargar:
+
+```python
+parametros = [
+    {'parameter_name': '/dev/api/sta/token',
+     'parameter_description': "Token JWT de la API, rota cada 90 dias",
+     'parameter_value': """abc123"""},
+]
+```
+
+Dos cosas que conviene saber:
+
+- **Hace falta el permiso `ssm:DescribeParameters`.** La descripción no viaja en `GetParametersByPath` como el valor: es un metadato y se pide con `DescribeParameters`. Si tu rol no lo tiene, ParamsX te avisa, el campo **no aparece** en el fichero y al cargar no se toca la descripción que haya en AWS.
+- **Al actualizar un parámetro, AWS reescribe su definición entera.** Por eso ParamsX manda siempre la descripción del fichero cuando cambia el valor, aunque no la hayas tocado: si no la mandara, se perdería. Y como no existe una API para cambiar solo la descripción, editarla crea una versión nueva del parámetro igual que cambiar el valor.
+
+Un cambio de descripción se ve en la pantalla de confirmación como `Modificado (descripción)`, y si cambias las dos cosas, `Modificado (valor | descripción)`.
+
+### Cifrado: `forzar_securestring`
+
+ParamsX sube todo como **SecureString** por defecto, y así se recomienda dejarlo: los parámetros de una cuenta acaban teniendo secretos, y con esto no depende de que nadie se acuerde.
+
+| `forzar_securestring` | Qué hace |
+|---|---|
+| `True` (por defecto) | Todo lo que se sube va cifrado como `SecureString`, sea del tipo que sea en AWS. |
+| `False` | Se respeta el tipo que ya tuviera el parámetro (`String`, `StringList` o `SecureString`): al actualizar no se manda el tipo, y AWS conserva el suyo. El fichero exportado trae además un campo `parameter_type` que puedes editar si quieres cambiarlo a propósito, y ese cambio cuenta como uno más: verás `Modificado (tipo: SecureString)`. |
+
+Los parámetros que creas con la opción 4 se crean siempre como `SecureString`, en los dos modos.
+
+El tipo se lee de la misma llamada que el valor, así que **no hace falta ningún permiso extra** para esto (a diferencia de la descripción).
+
 ### Cómo acotar tu parameter_list (recomendación)
 
 `parameter_list` es solo tu vista de trabajo: **la seguridad real la impone IAM, no este fichero**. La recomendación de uso es:
@@ -280,6 +323,7 @@ Formato del fichero exportado con `tags_activas = True`:
 ```python
 parametros = [
     {'parameter_name': '/dev/email/users',
+     'parameter_description': "Buzon que recibe los avisos de altas",
      'parameter_value': """agpetrovici@stanalytics.es""",
      'tagApplication': "",
      'tagEnvironment': "",

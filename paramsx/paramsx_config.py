@@ -77,6 +77,16 @@ perfil_nuevos = "min"
 # segunda lectura te machaque el fichero de la primera.
 fichero_por_ruta = False
 
+# ¿Todo lo que sube ParamsX va cifrado como SecureString?
+#   True  (por defecto) -> sí, siempre. Es lo recomendable: los parámetros de una cuenta
+#          suelen tener secretos, y así no depende de acordarse.
+#   False -> se respeta el tipo que ya tuviera el parámetro en AWS (String, StringList o
+#          SecureString): al actualizar no se manda el tipo, así que AWS conserva el suyo.
+#          En este modo el fichero exportado trae además un campo 'parameter_type' que
+#          puedes editar si quieres cambiarlo a propósito. Los parámetros que crees con
+#          la opción 4 se siguen creando como SecureString.
+forzar_securestring = True
+
 
 ## Configuraciones Tags
 

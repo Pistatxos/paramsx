@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.3.0
+
+### Añadido
+
+- **La descripción de los parámetros, editable como el valor.** El fichero exportado trae un campo `parameter_description` **debajo del nombre y antes del valor**: se lee de AWS, lo editas y al cargar se actualiza. Los cambios de descripción se detectan igual que los de valor y aparecen en la pantalla de confirmación como `Modificado (descripción)`. La opción 4 también la pide al crear un parámetro, entre la ruta y el valor.
+- Los backups incluyen la descripción, así que un backup restaura también las descripciones.
+- **Flag `forzar_securestring`** (por defecto `True`, el comportamiento de siempre): todo lo que sube ParamsX va cifrado como `SecureString`. Con `False` se respeta el tipo que ya tuviera el parámetro en AWS: al actualizar no se manda el tipo y AWS conserva el suyo (`Type` solo es obligatorio al crear). El fichero exportado trae además un campo `parameter_type` editable, por si quieres cambiar el tipo a propósito, y sus cambios se detectan como los del valor o la descripción. El tipo se lee de la misma llamada que el valor, así que no hace falta ningún permiso nuevo.
+
+### Nota sobre el valor y la descripción
+
+`put_parameter` con `Overwrite=True` reescribe la definición del parámetro, así que ParamsX **manda siempre la descripción que trae el fichero**, incluso cuando lo único que cambió fue el valor. Antes no se mandaba, y una descripción que ya existiera en AWS podía quedarse vacía al editar el valor.
+
+### Nota sobre permisos
+
+Leer las descripciones necesita **`ssm:DescribeParameters`**, porque no vienen en `GetParametersByPath` (son metadatos, no valores). Si tu rol no lo tiene, ParamsX te avisa al leer, el campo no aparece en el fichero y al cargar **no se toca** la descripción que haya en AWS. El resto sigue funcionando igual.
+
 ## 2.2.2
 
 Un renombrado de la configuración, sin cambios de comportamiento. **Los nombres antiguos

@@ -15,6 +15,7 @@ from .funcions import (
     compare_parameters, load_parameters, show_main_menu_selection,
     AccessDeniedError, build_full_path, etiqueta_entrada, agregar_tags_a_parametros,
     validar_tags_obligatorias, aplicar_cambios_tags, check_rds_correlacion,
+    agregar_descripciones_a_parametros,
     show_report, prompt_input, indexar_parametros, indice_a_parametros,
     ficheros_cargables,
     POSICIONES_ENTORNO, CASES_ENTORNO, CASES_RUTA, MARCADOR_ENTORNO, slug_entrada,
@@ -51,7 +52,7 @@ que va siempre en minúscula, aplicándole el 'case_entorno' del perfil."""
 # Opciones que viven fuera de 'configuraciones' y son opcionales: si el usuario no las
 # tiene, se usa el valor de la plantilla. Se listan para poder decirle qué le falta.
 CLAVES_OPCIONALES = (
-    "perfiles", "perfil_nuevos", "fichero_por_ruta",
+    "perfiles", "perfil_nuevos", "fichero_por_ruta", "forzar_securestring",
     "tags_activas", "obligatorias_vacias", "tags_obligatorias",
 )
 
@@ -97,6 +98,9 @@ def load_config():
     )
     config["fichero_por_ruta"] = bool(
         getattr(modulo, "fichero_por_ruta", plantilla_config.fichero_por_ruta)
+    )
+    config["forzar_securestring"] = bool(
+        getattr(modulo, "forzar_securestring", plantilla_config.forzar_securestring)
     )
     # Si no se declara, los parámetros nuevos usan el primer perfil definido
     # ('convencion_nuevos' es el nombre que tuvo en la 2.2.0)
@@ -301,9 +305,9 @@ def leer_ruta(stdscr, ssm, full_path, tags_activas, tags_obligatorias):
         show_message(stdscr, f"{e}", 2)
         return None, []
 
-    avisos = []
+    avisos = agregar_descripciones_a_parametros(ssm, parameters, full_path)
     if tags_activas:
-        avisos = agregar_tags_a_parametros(ssm, parameters, tags_obligatorias)
+        avisos.extend(agregar_tags_a_parametros(ssm, parameters, tags_obligatorias))
 
     return parameters, avisos
 
@@ -334,7 +338,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
     while True:
         path = prompt_input(
             stdscr,
-            "Crear nuevo parámetro (1/4): ruta",
+            "Crear nuevo parámetro (1/5): ruta",
             f"Ruta del parámetro (perfil '{nombre_perfil}', sin el entorno):",
             valor=path,
             ayuda=ayudas.get(posicion, ""),
@@ -360,7 +364,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
     path = build_full_path(path_declarado, perfil, entorno)
 
     if not show_report(
-        stdscr, "Crear nuevo parámetro (2/4): confirmar la ruta",
+        stdscr, "Crear nuevo parámetro (2/5): confirmar la ruta",
         [f"Perfil:  {nombre_perfil}",
          f"Escrita:    {path_declarado}",
          f"En AWS:     {path}",
@@ -370,12 +374,26 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
     ):
         return
 
-    # 2. Valor (string plano o JSON)
+    # 3. Descripción: va debajo del nombre y antes del valor, igual que en el fichero
+    descripcion = prompt_input(
+        stdscr,
+        "Crear nuevo parámetro (3/5): descripción",
+        "Descripción del parámetro (opcional):",
+        valor="",
+        permitir_vacio=True,
+        ayuda="Para qué sirve este parámetro. Se guarda en AWS y luego se puede editar "
+              "en el fichero exportado. Máximo 1024 caracteres; Enter para dejarla vacía.",
+    )
+    if descripcion is None:
+        return
+    descripcion = descripcion.strip()[:1024]
+
+    # 4. Valor (string plano o JSON)
     valor = ""
     while True:
         valor = prompt_input(
             stdscr,
-            "Crear nuevo parámetro (3/4): valor",
+            "Crear nuevo parámetro (4/5): valor",
             f"Valor para {path}:",
             valor=valor,
             ayuda='Texto plano o JSON en una línea, ej: {"host": "x", "user": "y", "pass": "z"}',
@@ -392,7 +410,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
                 continue
         break
 
-    # 3. Tags obligatorias
+    # 5. Tags obligatorias
     tags = {}
     faltantes = []
     if tags_activas:
@@ -406,7 +424,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
             predeterminado = entorno if clave == "Environment" else ""
             respuesta = prompt_input(
                 stdscr,
-                f"Crear nuevo parámetro (4/4): tags [{indice}/{len(tags_obligatorias)}]",
+                f"Crear nuevo parámetro (5/5): tags [{indice}/{len(tags_obligatorias)}]",
                 f"Valor de la tag obligatoria '{clave}':",
                 valor=predeterminado,
                 permitir_vacio=obligatorias_vacias,
@@ -433,7 +451,13 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
     aviso_rds = check_rds_correlacion(ssm, path)
 
     # Resumen y confirmación
-    lineas = [f"Ruta:   {path}", f"Valor:  {valor[:120]}", "Tipo:   SecureString", ""]
+    lineas = [
+        f"Ruta:        {path}",
+        f"Descripción: {descripcion or '(vacía)'}",
+        f"Valor:       {valor[:120]}",
+        "Tipo:        SecureString",
+        "",
+    ]
     if tags_activas:
         lineas.append("Tags:")
         lineas.extend([f"  {clave} = {valor_tag}" for clave, valor_tag in tags.items()])
@@ -456,6 +480,8 @@ def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
         "Type": "SecureString",
         "Overwrite": False,
     }
+    if descripcion:
+        kwargs["Description"] = descripcion
     if tags_activas and tags:
         kwargs["Tags"] = [{"Key": k, "Value": v} for k, v in tags.items()]
 
@@ -512,6 +538,7 @@ def main(stdscr, config=None):
     TAGS_OBLIGATORIAS = config['tags_obligatorias']
     OBLIGATORIAS_VACIAS = config.get('obligatorias_vacias', False)
     FICHERO_POR_RUTA = config.get('fichero_por_ruta', False)
+    FORZAR_SECURESTRING = config.get('forzar_securestring', True)
     PERFIL_NUEVOS = config.get('perfil_nuevos')
 
     # Nombre del fichero exportado: con fichero_por_ruta cada ruta tiene el suyo, así que
@@ -565,10 +592,12 @@ def main(stdscr, config=None):
                     continue
 
             # Exportar parámetros al archivo principal
-            export_parameters_to_file(parameters, file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
+            export_parameters_to_file(parameters, file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS,
+                                      incluir_tipo=not FORZAR_SECURESTRING)
 
             # Crear un respaldo exacto del archivo principal (valores y tags)
-            export_parameters_to_file(parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
+            export_parameters_to_file(parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS,
+                                      incluir_tipo=not FORZAR_SECURESTRING)
 
             # Confirmación de archivos creados
             lineas = [
@@ -661,14 +690,30 @@ def main(stdscr, config=None):
                             )
 
                     try:
-                        if change["value_changed"]:
-                            # Subir o actualizar parámetros
-                            ssm.put_parameter(
-                                Name=param_name,
-                                Value=change["value"],
-                                Type='SecureString',
-                                Overwrite=True
-                            )
+                        if (change["value_changed"] or change.get("description_changed")
+                                or change.get("type_changed")):
+                            kwargs_put = {
+                                "Name": param_name,
+                                "Value": change["value"],
+                                "Overwrite": True,
+                            }
+                            # El 'Type' solo es obligatorio al CREAR: al actualizar, si no
+                            # se manda, AWS conserva el que tuviera el parámetro. Por eso
+                            # con forzar_securestring = False se omite en las
+                            # modificaciones en vez de adivinarlo.
+                            if FORZAR_SECURESTRING:
+                                kwargs_put["Type"] = "SecureString"
+                            elif change.get("type"):
+                                kwargs_put["Type"] = change["type"]
+                            elif tipo == "Nuevo":
+                                kwargs_put["Type"] = "SecureString"
+                            # put_parameter con Overwrite reescribe la definición del
+                            # parámetro: si no se manda la descripción, la que hubiera en
+                            # AWS se pierde. Así que se manda siempre que el fichero la
+                            # traiga, incluso cuando lo que cambió fue solo el valor.
+                            if change.get("description") is not None:
+                                kwargs_put["Description"] = change["description"]
+                            ssm.put_parameter(**kwargs_put)
                         # Los cambios de tags se aplican en la misma pasada que el valor
                         aplicar_cambios_tags(
                             ssm, param_name, change["tags_set"], change["tags_remove"]
@@ -715,7 +760,8 @@ def main(stdscr, config=None):
                             "tags": change["tags"],
                         }
                 export_parameters_to_file(
-                    indice_a_parametros(indice), backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
+                    indice_a_parametros(indice), backup_file_name, TAGS_ACTIVAS,
+                    TAGS_OBLIGATORIAS, incluir_tipo=not FORZAR_SECURESTRING
                 )
 
                 lineas.extend(["", f"Errores ({len(errores)}):"])
@@ -765,6 +811,9 @@ def main(stdscr, config=None):
                             # Ruta sin parámetros para ese entorno: se ignora en el backup total
                             continue
 
+                        avisos_totales.extend(
+                            agregar_descripciones_a_parametros(ssm, parameters, full_path)
+                        )
                         if TAGS_ACTIVAS:
                             avisos_totales.extend(
                                 agregar_tags_a_parametros(ssm, parameters, TAGS_OBLIGATORIAS)
@@ -774,7 +823,8 @@ def main(stdscr, config=None):
                 # Crear archivo de backup total listado
                 backup_file_name = "total_listed_parameters_backup.py"
                 export_parameters_to_file(
-                    all_parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
+                    all_parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS,
+                    incluir_tipo=not FORZAR_SECURESTRING
                 )
 
                 # Confirmación de backup creado
@@ -796,7 +846,8 @@ def main(stdscr, config=None):
                 # Crear archivo de backup de todos los parámetros
                 backup_file_name = "all_parameters_backup.py"
                 export_parameters_to_file(
-                    parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
+                    parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS,
+                    incluir_tipo=not FORZAR_SECURESTRING
                 )
                 lineas = [
                     f"Backup de todos los parámetros creado: {backup_file_name}",
@@ -829,7 +880,8 @@ def main(stdscr, config=None):
                 # Crear archivo de backup con nombre claro
                 backup_file_name = f"{slug_entrada(selected_param)}_{selected_env}_backup.py"
                 export_parameters_to_file(
-                    parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS
+                    parameters, backup_file_name, TAGS_ACTIVAS, TAGS_OBLIGATORIAS,
+                    incluir_tipo=not FORZAR_SECURESTRING
                 )
 
                 # Confirmación de backup creado
