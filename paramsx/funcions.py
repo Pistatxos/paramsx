@@ -30,7 +30,7 @@ def _codigo_error(error):
     return error.response.get("Error", {}).get("Code", "")
 
 
-# Valores admitidos en un perfil de naming
+# Valores admitidos en un perfil
 POSICIONES_ENTORNO = ("inicio", "final", "mixto", "ninguno")
 CASES_ENTORNO = ("lower", "upper", "capitalize")
 CASES_RUTA = ("lower", "upper", "capitalize", "ninguno")
@@ -61,7 +61,7 @@ def aplicar_case_ruta(path, case_ruta):
     return path
 
 
-# Construir la ruta completa aplicando el perfil de naming de la entrada.
+# Construir la ruta completa aplicando el perfil de la entrada.
 # Las tres posiciones son la misma operación: se normaliza la ruta a una plantilla con
 # un único marcador y se sustituye por el entorno. "ninguno" no lleva marcador.
 def build_full_path(path, perfil, entorno):
@@ -96,20 +96,20 @@ def build_full_path(path, perfil, entorno):
 
 
 # Trozo de nombre de fichero derivado de una entrada de parameter_list:
-# {"path": "/API/*/STA", "convencion": "mixto_max"} -> API_env_STA__mixto_max
+# {"path": "/API/*/STA", "perfil": "mixto_max"} -> API_env_STA__mixto_max
 # Lleva la posición del marcador y el perfil porque dos entradas distintas pueden
 # compartir la ruta declarada (con perfiles distintos, o con el entorno en otro sitio)
 # y apuntar a rutas de AWS diferentes: sus ficheros no se pueden pisar.
 def slug_entrada(entrada):
     segmentos = [s for s in entrada["path"].strip("/").split("/") if s]
     ruta = "_".join("env" if s == MARCADOR_ENTORNO else s for s in segmentos)
-    convencion = entrada.get("convencion")
-    return f"{ruta}__{convencion}" if convencion else ruta
+    perfil = entrada.get("perfil")
+    return f"{ruta}__{perfil}" if perfil else ruta
 
 
 # Etiqueta legible de una entrada de parameter_list para los menús
 def etiqueta_entrada(entrada):
-    return f"{entrada['path']}  [{entrada['convencion']}]"
+    return f"{entrada['path']}  [{entrada['perfil']}]"
 
 
 # Ficheros exportados que hay en el directorio actual listos para cargar: los que

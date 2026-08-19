@@ -1,6 +1,6 @@
 ## Configuraciones ParamsX
 
-# --- Perfiles de naming -------------------------------------------------------------
+# --- Perfiles -------------------------------------------------------------
 # Un perfil dice CÓMO se construye la ruta real en AWS a partir de la ruta que declaras
 # en 'parameter_list' y del entorno que eliges en el menú. Los nombres son tuyos: define
 # solo los que uses y llámalos como quieras. Un perfil tiene tres campos:
@@ -42,7 +42,7 @@
 # Combina los tres campos como necesites: no hay una lista cerrada de perfiles. En el
 # README tienes más ejemplos.
 
-naming = {
+perfiles = {
     "min": {"posicion_entorno": "inicio", "case_entorno": "lower", "case_ruta": "lower"},
     "max": {"posicion_entorno": "final", "case_entorno": "upper", "case_ruta": "ninguno"},
     "mixto_max": {"posicion_entorno": "mixto", "case_entorno": "upper", "case_ruta": "ninguno"},
@@ -55,19 +55,19 @@ configuraciones = {
     "region_name": "eu-south-2",         # Cambiar por tu región de AWS
     "entornos": ['dev', 'pre', 'prod'],  # SIEMPRE en minúscula, es la lista canónica única
     "parameter_list": [
-        {"path": "/common", "convencion": "min"},      # -> /dev/common
-        {"path": "/rds", "convencion": "min"},         # -> /dev/rds
-        {"path": "/EMAIL", "convencion": "max"},       # -> /EMAIL/DEV
-        {"path": "/API/STA", "convencion": "max"},     # -> /API/STA/DEV
+        {"path": "/common", "perfil": "min"},      # -> /dev/common
+        {"path": "/rds", "perfil": "min"},         # -> /dev/rds
+        {"path": "/EMAIL", "perfil": "max"},       # -> /EMAIL/DEV
+        {"path": "/API/STA", "perfil": "max"},     # -> /API/STA/DEV
         # Con 'mixto' acotas por debajo del entorno: esto lee solo stan_ai, en vez de
         # todo lo que cuelga de /API/MULTIAPI/DEV
-        {"path": "/API/MULTIAPI/*/stan_ai", "convencion": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
+        {"path": "/API/MULTIAPI/*/stan_ai", "perfil": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
     ]
 }
 
-# Perfil de naming que se usa al crear un parámetro nuevo (opción 4 del menú).
-# Si no lo defines, se usa el primer perfil de 'naming'.
-convencion_nuevos = "min"
+# Perfil que se usa al crear un parámetro nuevo (opción 4 del menú).
+# Si no lo defines, se usa el primero de 'perfiles'.
+perfil_nuevos = "min"
 
 # ¿El nombre del fichero exportado incluye la ruta leída?
 #   False -> parameters_dev.py            (comportamiento de siempre)

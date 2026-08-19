@@ -1,5 +1,40 @@
 # Changelog
 
+## 2.2.2
+
+Un renombrado de la configuración, sin cambios de comportamiento. **Los nombres antiguos
+se siguen aceptando**, así que no tienes que tocar tu fichero para actualizar.
+
+### Cambiado
+
+- **Un solo nombre para el concepto: `perfiles` / `perfil`.** El mismo concepto se llamaba de tres formas distintas: el diccionario era `naming`, la clave de cada entrada de `parameter_list` era `convencion` y la documentación decía "perfil". Explicárselo a alguien obligaba a traducir dos veces. Ahora:
+
+  | Antes | Ahora |
+  |---|---|
+  | `naming = {...}` | `perfiles = {...}` |
+  | `{"path": "/rds", "convencion": "min"}` | `{"path": "/rds", "perfil": "min"}` |
+  | `convencion_nuevos = "min"` | `perfil_nuevos = "min"` |
+
+- `paramsx configure` te dice qué nombres antiguos usas y cómo se llaman ahora, incluidas las entradas de `parameter_list`. Los viejos (`naming`, `convencion`, `convencion_nuevos` y el `abac` de la 2.0) se traducen al cargar, así que dentro del programa solo existe el nombre nuevo.
+
+## 2.2.1
+
+Solo comandos de terminal y documentación: no cambia nada de la lectura, la carga ni la
+construcción de rutas. Si ya tienes la 2.2.0 funcionando, actualizar no te obliga a tocar
+tu configuración.
+
+### Añadido
+
+- **`paramsx --version`** (y `-v`), y la versión también en la cabecera de `paramsx --help`. La versión pasa a vivir en `paramsx/__init__.py` y `setup.py` la lee de ahí, para que el paquete y el comando no puedan decir cosas distintas.
+- **`paramsx configure` sobre una configuración que ya existe ya no se queda en "no se sobrescribirá".** Sigue sin tocar el fichero, pero ahora te dice qué opciones nuevas no tienes y con qué valor por defecto se rellenan, si usas el nombre antiguo `abac`, y si la configuración es válida.
+- **`paramsx configure --ejemplo`**: además de lo anterior, deja la plantilla de esta versión en `~/.xsoft/paramsx_config.ejemplo.py`, al lado de la tuya, para comparar. ParamsX no la lee: es solo referencia. Escribir en tu configuración es lo único que no se puede deshacer, así que va en un comando aparte y en otro fichero.
+- Mensaje de primer arranque más claro cuando todavía no hay configuración, explicando qué hace `paramsx configure` y dónde va el fichero.
+
+### Cambiado
+
+- **`paramsx --help` al día.** La opción 2 ya explica que eliges entre los ficheros que tengas en el directorio; el ejemplo de `mixto` usa el entorno en mayúscula como el resto de la documentación; `fichero_por_ruta` enseña el nombre real (`parameters_dev__API_STA__max.py`); y se documentan `profile_name`, `region_name` y `entornos`, que no aparecían aunque son obligatorios.
+- **El README muestra el contenido literal de `paramsx_config.py`**, con sus comentarios y tablas, en vez de una versión resumida: es exactamente lo que te crea `paramsx configure`, así que no pueden desincronizarse. Y una tabla con todos los comandos disponibles.
+
 ## 2.2.0
 
 ### Añadido
@@ -14,10 +49,6 @@
 - **La carga (opción 2) lista los ficheros que hay en el directorio**, en vez de pedir ruta y entorno y fallar si no existe el fichero correspondiente. Se ofrecen los que conservan su backup al lado, se lean con `fichero_por_ruta` o sin él, e incluso los de una ruta que ya hayas quitado de tu `parameter_list`.
 - **`convencion_nuevos`**: qué perfil usan los parámetros creados con la opción 4. Si no lo declaras, se usa el primer perfil de `naming`.
 - **Validación de la configuración al arrancar**, para que un naming mal declarado se vea como un error y no como una lista de parámetros vacía: perfil inexistente, `posicion_entorno`/`case_entorno`/`case_ruta` con valores inválidos, perfil `mixto` sin `*`, `*` en un perfil que no es `mixto`, más de un `*`, `*` pegado a un segmento, y aviso si dos entradas resuelven a la misma ruta.
-
-- **`paramsx --version`** (y `-v`), y la versión también en la cabecera de `paramsx --help`. La versión pasa a vivir en `paramsx/__init__.py` y `setup.py` la lee de ahí, para que el paquete y el comando no puedan decir cosas distintas.
-- **`paramsx configure` sobre una configuración que ya existe ya no se queda en "no se sobrescribirá".** Sigue sin tocar el fichero, pero ahora te dice qué opciones nuevas no tienes y con qué valor por defecto se rellenan, si usas el nombre antiguo `abac`, y si la configuración es válida. Con `paramsx configure --ejemplo` además deja la plantilla de la versión en `~/.xsoft/paramsx_config.ejemplo.py` para comparar, sin tocar la tuya.
-- Mensaje de primer arranque más claro cuando todavía no hay configuración, explicando qué hace `paramsx configure`.
 
 ### Cambiado
 

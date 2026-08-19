@@ -31,17 +31,17 @@ PLANTILLA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "param
 MENSAJE_MIGRACION = """BREAKING CHANGE en la configuración de ParamsX
 ------------------------------------------------
 'parameter_list' ya no es una lista de strings: ahora cada entrada es un diccionario
-que declara qué perfil de naming usa. Edita a mano ~/.xsoft/paramsx_config.py:
+que declara qué perfil usa. Edita a mano ~/.xsoft/paramsx_config.py:
 
     "entornos": ['dev', 'pre', 'prod'],   # SIEMPRE en minúscula
     "parameter_list": [
-        {"path": "/common",   "convencion": "min"},   # /common   + dev -> /dev/common
-        {"path": "/rds",      "convencion": "min"},   # /rds      + dev -> /dev/rds
-        {"path": "/EMAIL",    "convencion": "max"},   # /EMAIL    + dev -> /EMAIL/DEV
-        {"path": "/API/STA",  "convencion": "max"},   # /API/STA  + dev -> /API/STA/DEV
+        {"path": "/common",   "perfil": "min"},   # /common   + dev -> /dev/common
+        {"path": "/rds",      "perfil": "min"},   # /rds      + dev -> /dev/rds
+        {"path": "/EMAIL",    "perfil": "max"},   # /EMAIL    + dev -> /EMAIL/DEV
+        {"path": "/API/STA",  "perfil": "max"},   # /API/STA  + dev -> /API/STA/DEV
     ]
 
-Los perfiles se definen en el diccionario 'naming' del mismo fichero, con la posición
+Los perfiles se definen en el diccionario 'perfiles' del mismo fichero, con la posición
 y el case del entorno. 'min' y 'max' vienen predefinidos en la plantilla.
 
 Ya no existe 'entornos_old': el entorno se escribe a partir de la lista 'entornos',
@@ -51,9 +51,17 @@ que va siempre en minúscula, aplicándole el 'case_entorno' del perfil."""
 # Opciones que viven fuera de 'configuraciones' y son opcionales: si el usuario no las
 # tiene, se usa el valor de la plantilla. Se listan para poder decirle qué le falta.
 CLAVES_OPCIONALES = (
-    "naming", "convencion_nuevos", "fichero_por_ruta",
+    "perfiles", "perfil_nuevos", "fichero_por_ruta",
     "tags_activas", "obligatorias_vacias", "tags_obligatorias",
 )
+
+# Nombres antiguos que se siguen aceptando -> nombre actual. Se traducen al cargar, así
+# que dentro del código solo existe el nombre nuevo.
+NOMBRES_ANTIGUOS = {
+    "naming": "perfiles",              # 2.2.0
+    "convencion_nuevos": "perfil_nuevos",  # 2.2.0
+    "abac": "tags_activas",            # 2.0.0 y 2.1.0
+}
 
 
 # Ejecutar el fichero de configuración del usuario y devolver el módulo resultante
@@ -73,7 +81,10 @@ def load_config():
     config = dict(modulo.configuraciones)
     # Todo lo que va fuera de 'configuraciones' es opcional en el fichero del usuario:
     # si no está, se usa el valor de la plantilla que trae el paquete.
-    config["naming"] = dict(getattr(modulo, "naming", plantilla_config.naming))
+    # 'naming' es el nombre que tuvo 'perfiles' en la 2.2.0
+    config["perfiles"] = dict(
+        getattr(modulo, "perfiles", getattr(modulo, "naming", plantilla_config.perfiles))
+    )
     # 'abac' es el nombre antiguo (2.0/2.1) de 'tags_activas': se sigue aceptando.
     config["tags_activas"] = bool(
         getattr(modulo, "tags_activas", getattr(modulo, "abac", plantilla_config.tags_activas))
@@ -88,8 +99,13 @@ def load_config():
         getattr(modulo, "fichero_por_ruta", plantilla_config.fichero_por_ruta)
     )
     # Si no se declara, los parámetros nuevos usan el primer perfil definido
-    primer_perfil = next(iter(config["naming"]), None)
-    config["convencion_nuevos"] = getattr(modulo, "convencion_nuevos", None) or primer_perfil
+    # ('convencion_nuevos' es el nombre que tuvo en la 2.2.0)
+    primer_perfil = next(iter(config["perfiles"]), None)
+    config["perfil_nuevos"] = (
+        getattr(modulo, "perfil_nuevos", None)
+        or getattr(modulo, "convencion_nuevos", None)
+        or primer_perfil
+    )
     return config
 
 
@@ -112,21 +128,21 @@ def validate_config(config):
     elif "entornos" in config:
         errores.append("'entornos' debe ser una lista no vacía de entornos en minúscula.")
 
-    naming = config.get("naming")
-    if not isinstance(naming, dict) or not naming:
+    perfiles = config.get("perfiles")
+    if not isinstance(perfiles, dict) or not perfiles:
         errores.append(
-            "'naming' debe ser un diccionario con al menos un perfil "
+            "'perfiles' debe ser un diccionario con al menos un perfil "
             "(ver la plantilla en el propio fichero de configuración)."
         )
-        naming = {}
+        perfiles = {}
     else:
-        errores.extend(validar_naming(naming))
+        errores.extend(validar_perfiles(perfiles))
 
-    convencion_nuevos = config.get("convencion_nuevos")
-    if naming and convencion_nuevos not in naming:
+    perfil_nuevos = config.get("perfil_nuevos")
+    if perfiles and perfil_nuevos not in perfiles:
         errores.append(
-            f"'convencion_nuevos' apunta a un perfil que no existe: {convencion_nuevos!r}. "
-            f"Perfiles definidos en 'naming': {', '.join(sorted(naming))}."
+            f"'perfil_nuevos' apunta a un perfil que no existe: {perfil_nuevos!r}. "
+            f"Perfiles definidos en 'perfiles': {', '.join(sorted(perfiles))}."
         )
 
     parameter_list = config.get("parameter_list")
@@ -144,26 +160,26 @@ def validate_config(config):
             errores.append(f"Entrada inválida en parameter_list: {entrada!r}")
             continue
         path = entrada.get("path")
-        convencion = entrada.get("convencion")
+        nombre_perfil = perfil_de(entrada)
         if not isinstance(path, str) or not path.strip("/"):
             errores.append(f"'path' inválido o vacío en parameter_list: {entrada!r}")
             continue
         if not path.startswith("/"):
             errores.append(f"El 'path' debe empezar por '/': {path!r}")
-        if convencion not in naming:
+        if nombre_perfil not in perfiles:
             errores.append(
-                f"'convencion' inválida en {path!r}: {convencion!r}. "
-                f"Perfiles definidos en 'naming': {', '.join(sorted(naming)) or '(ninguno)'}."
+                f"'perfil' inválido en {path!r}: {nombre_perfil!r}. "
+                f"Perfiles definidos en 'perfiles': {', '.join(sorted(perfiles)) or '(ninguno)'}."
             )
             continue
-        errores.extend(validar_marcador(path, convencion, naming[convencion]))
+        errores.extend(validar_marcador(path, nombre_perfil, perfiles[nombre_perfil]))
 
     # Dos entradas que resuelvan a la misma ruta no rompen nada, pero duplican trabajo
     # y confunden en el menú, así que se avisa.
     vistas = {}
     entornos_muestra = config.get("entornos") or ["dev"]
     for entrada in parameter_list:
-        perfil = naming.get(entrada.get("convencion")) if isinstance(entrada, dict) else None
+        perfil = perfiles.get(perfil_de(entrada)) if isinstance(entrada, dict) else None
         if not isinstance(perfil, dict):
             continue
         try:
@@ -181,12 +197,20 @@ def validate_config(config):
     return errores, avisos
 
 
-# Validar los perfiles de naming. Devuelve la lista de errores.
-def validar_naming(naming):
+# Nombre del perfil que usa una entrada. 'convencion' es el nombre que tuvo esta clave
+# en la 2.0, la 2.1 y la 2.2.0, y se sigue aceptando.
+def perfil_de(entrada):
+    if not isinstance(entrada, dict):
+        return None
+    return entrada.get("perfil", entrada.get("convencion"))
+
+
+# Validar los perfiles. Devuelve la lista de errores.
+def validar_perfiles(perfiles):
     errores = []
-    for nombre, perfil in naming.items():
+    for nombre, perfil in perfiles.items():
         if not isinstance(perfil, dict):
-            errores.append(f"El perfil de naming {nombre!r} debe ser un diccionario.")
+            errores.append(f"El perfil {nombre!r} debe ser un diccionario.")
             continue
 
         posicion = perfil.get("posicion_entorno")
@@ -215,7 +239,7 @@ def validar_naming(naming):
 
 # El marcador '*' y la posición del perfil tienen que contar la misma historia: si no,
 # la ruta se construye mal y SSM devuelve cero parámetros sin decir por qué.
-def validar_marcador(path, convencion, perfil):
+def validar_marcador(path, nombre_perfil, perfil):
     segmentos = [s for s in path.strip("/").split("/") if s]
     marcadores = segmentos.count(MARCADOR_ENTORNO)
     posicion = perfil.get("posicion_entorno")
@@ -228,14 +252,14 @@ def validar_marcador(path, convencion, perfil):
 
     if posicion == "mixto" and marcadores != 1:
         return [
-            f"La ruta {path!r} usa el perfil {convencion!r} ('mixto') y debe llevar "
+            f"La ruta {path!r} usa el perfil {nombre_perfil!r} ('mixto') y debe llevar "
             f"exactamente un '{MARCADOR_ENTORNO}' que marque dónde va el entorno "
             f"(tiene {marcadores})."
         ]
 
     if posicion != "mixto" and marcadores:
         return [
-            f"La ruta {path!r} lleva un '{MARCADOR_ENTORNO}' pero su perfil {convencion!r} "
+            f"La ruta {path!r} lleva un '{MARCADOR_ENTORNO}' pero su perfil {nombre_perfil!r} "
             f"tiene posicion_entorno='{posicion}', que ya decide dónde va el entorno. "
             "Usa un perfil 'mixto' o quita el marcador."
         ]
@@ -246,8 +270,10 @@ def validar_marcador(path, convencion, perfil):
 # Normalizar la configuración ya validada
 def normalize_config(config):
     config["entornos"] = [str(e).lower() for e in config["entornos"]]
+    # Se normaliza la clave del perfil: aunque el usuario haya escrito 'convencion',
+    # dentro del programa las entradas solo tienen 'perfil'.
     config["parameter_list"] = [
-        {"path": "/" + entrada["path"].strip("/"), "convencion": entrada["convencion"]}
+        {"path": "/" + entrada["path"].strip("/"), "perfil": perfil_de(entrada)}
         for entrada in config["parameter_list"]
     ]
     return config
@@ -282,8 +308,8 @@ def leer_ruta(stdscr, ssm, full_path, tags_activas, tags_obligatorias):
     return parameters, avisos
 
 
-# Feature 2: crear un parámetro nuevo con el perfil de naming de 'convencion_nuevos'
-def crear_parametro(stdscr, ssm, entornos, perfil, convencion, tags_activas,
+# Feature 2: crear un parámetro nuevo con el perfil declarado en 'perfil_nuevos'
+def crear_parametro(stdscr, ssm, entornos, perfil, nombre_perfil, tags_activas,
                     tags_obligatorias, obligatorias_vacias=False):
     env_choice = show_environment_selection(stdscr, entornos)
     if env_choice is None:
@@ -309,7 +335,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, convencion, tags_activas,
         path = prompt_input(
             stdscr,
             "Crear nuevo parámetro (1/4): ruta",
-            f"Ruta del parámetro (convención '{convencion}', sin el entorno):",
+            f"Ruta del parámetro (perfil '{nombre_perfil}', sin el entorno):",
             valor=path,
             ayuda=ayudas.get(posicion, ""),
         )
@@ -323,7 +349,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, convencion, tags_activas,
             show_message(stdscr, "La ruta no puede estar vacía.", 2)
             continue
 
-        problemas = validar_marcador(path, convencion, perfil)
+        problemas = validar_marcador(path, nombre_perfil, perfil)
         if problemas:
             show_message(stdscr, problemas[0], 2)
             continue
@@ -335,7 +361,7 @@ def crear_parametro(stdscr, ssm, entornos, perfil, convencion, tags_activas,
 
     if not show_report(
         stdscr, "Crear nuevo parámetro (2/4): confirmar la ruta",
-        [f"Convención: {convencion}",
+        [f"Perfil:  {nombre_perfil}",
          f"Escrita:    {path_declarado}",
          f"En AWS:     {path}",
          "",
@@ -481,12 +507,12 @@ def main(stdscr, config=None):
 
     environments = config['entornos']
     PARAMETER_LIST = config['parameter_list']
-    NAMING = config['naming']
+    PERFILES = config['perfiles']
     TAGS_ACTIVAS = config['tags_activas']
     TAGS_OBLIGATORIAS = config['tags_obligatorias']
     OBLIGATORIAS_VACIAS = config.get('obligatorias_vacias', False)
     FICHERO_POR_RUTA = config.get('fichero_por_ruta', False)
-    CONVENCION_NUEVOS = config.get('convencion_nuevos')
+    PERFIL_NUEVOS = config.get('perfil_nuevos')
 
     # Nombre del fichero exportado: con fichero_por_ruta cada ruta tiene el suyo, así que
     # leer una segunda ruta del mismo entorno no machaca lo que estabas editando.
@@ -512,9 +538,9 @@ def main(stdscr, config=None):
 
             selected_env = environments[env_choice]
 
-            # Crear el prefijo completo según el perfil de naming de la entrada
+            # Crear el prefijo completo según el perfil de la entrada
             full_path = build_full_path(
-                selected_param["path"], NAMING[selected_param["convencion"]], selected_env
+                selected_param["path"], PERFILES[selected_param["perfil"]], selected_env
             )
             show_message(stdscr, f"Buscando parámetros en: {full_path}...", 3)  # Mensaje inicial
 
@@ -727,7 +753,7 @@ def main(stdscr, config=None):
                 for entrada in PARAMETER_LIST:
                     for env in environments:
                         full_path = build_full_path(
-                            entrada["path"], NAMING[entrada["convencion"]], env
+                            entrada["path"], PERFILES[entrada["perfil"]], env
                         )
                         try:
                             # Obtener parámetros desde AWS SSM
@@ -791,9 +817,9 @@ def main(stdscr, config=None):
 
                 selected_env = environments[env_choice]
 
-                # Crear el prefijo completo según el perfil de naming de la entrada
+                # Crear el prefijo completo según el perfil de la entrada
                 full_path = build_full_path(
-                    selected_param["path"], NAMING[selected_param["convencion"]], selected_env
+                    selected_param["path"], PERFILES[selected_param["perfil"]], selected_env
                 )
 
                 parameters, avisos = leer_ruta(stdscr, ssm, full_path, TAGS_ACTIVAS, TAGS_OBLIGATORIAS)
@@ -818,9 +844,9 @@ def main(stdscr, config=None):
                 show_report(stdscr, "Backup creado", lineas, color_pair=3)
 
         elif choice == 4:
-            # Crear nuevo parámetro con el perfil declarado en 'convencion_nuevos'
+            # Crear nuevo parámetro con el perfil declarado en 'perfil_nuevos'
             crear_parametro(
-                stdscr, ssm, environments, NAMING[CONVENCION_NUEVOS], CONVENCION_NUEVOS,
+                stdscr, ssm, environments, PERFILES[PERFIL_NUEVOS], PERFIL_NUEVOS,
                 TAGS_ACTIVAS, TAGS_OBLIGATORIAS, OBLIGATORIAS_VACIAS
             )
 
@@ -856,7 +882,7 @@ def create_config(escribir_ejemplo=False):
         print("  paramsx configure --ejemplo")
 
 
-# Valor por defecto en una línea: el repr de 'naming' o de las tags ocupa media pantalla
+# Valor por defecto en una línea: el repr de 'perfiles' o de las tags ocupa media pantalla
 def resumir_valor(valor):
     if isinstance(valor, dict):
         return f"{len(valor)} perfiles ({', '.join(valor)})"
@@ -878,11 +904,27 @@ def revisar_config(config_file):
         return
 
     faltan = [clave for clave in CLAVES_OPCIONALES if not hasattr(modulo, clave)]
-    # 'abac' es el nombre antiguo de 'tags_activas': teniéndolo no falta nada
-    if "tags_activas" in faltan and hasattr(modulo, "abac"):
-        faltan.remove("tags_activas")
-        print("- 'abac' es el nombre antiguo de 'tags_activas'. Sigue funcionando, pero")
-        print("  renómbralo cuando puedas: el nuevo dice lo que hace.")
+
+    # Los nombres antiguos siguen funcionando, así que lo que cubren no "falta":
+    # solo se avisa de que hay una forma más clara de escribirlo.
+    antiguos = [(v, n) for v, n in NOMBRES_ANTIGUOS.items() if hasattr(modulo, v)]
+    lista = getattr(modulo, "configuraciones", {})
+    lista = lista.get("parameter_list", []) if isinstance(lista, dict) else []
+    con_convencion = [
+        e for e in lista
+        if isinstance(e, dict) and "perfil" not in e and "convencion" in e
+    ]
+
+    if antiguos or con_convencion:
+        print("Nombres antiguos que sigues usando. Funcionan, pero el nuevo se entiende mejor:")
+        for viejo, nuevo in antiguos:
+            if nuevo in faltan:
+                faltan.remove(nuevo)
+            print(f"  {viejo:20} -> {nuevo}")
+        if con_convencion:
+            print(f"  {'convencion':20} -> perfil "
+                  f"(en {len(con_convencion)} entrada(s) de parameter_list)")
+        print()
 
     if faltan:
         print("Opciones que no tienes y que ParamsX rellena con el valor por defecto:")
@@ -943,14 +985,14 @@ Opciones del menú:
   2. Cargar parámetros            Elige uno de los ficheros exportados que tengas en el
                                   directorio, compara y aplica los cambios en AWS.
   3. Crear Backup de parámetros   Respalda una ruta, la lista completa o toda la cuenta.
-  4. Crear nuevo parámetro        Crea un parámetro nuevo con el perfil 'convencion_nuevos'.
+  4. Crear nuevo parámetro        Crea un parámetro nuevo con el perfil de 'perfil_nuevos'.
 
 Configuración (~/.xsoft/paramsx_config.py). El fichero trae comentada cada opción:
   profile_name      Perfil de ~/.aws/credentials.
   region_name       Región de AWS.
   entornos          Lista de entornos, SIEMPRE en minúscula: ['dev', 'pre', 'prod'].
-                    Cada perfil de naming decide cómo se escriben en la ruta.
-  naming            Perfiles de naming: cómo se construye la ruta real en AWS. Los
+                    Cada perfil decide cómo se escriben en la ruta.
+  perfiles          Cómo se construye la ruta real en AWS. Los
                     nombres los eliges tú y combinas estos tres campos:
                       posicion_entorno  'inicio'  /rds       -> /dev/rds
                                         'final'   /API/STA   -> /API/STA/DEV
@@ -959,8 +1001,8 @@ Configuración (~/.xsoft/paramsx_config.py). El fichero trae comentada cada opci
                       case_entorno      'lower' | 'upper' | 'capitalize'
                       case_ruta         'lower' | 'upper' | 'capitalize' | 'ninguno'
                                         (solo al crear parámetros, opción 4)
-  parameter_list    Lista de dicts {"path": "/rds", "convencion": "<perfil de naming>"}.
-  convencion_nuevos Perfil que usan los parámetros creados con la opción 4.
+  parameter_list    Lista de dicts {"path": "/rds", "perfil": "<nombre de un perfil>"}.
+  perfil_nuevos     Perfil que usan los parámetros creados con la opción 4.
   fichero_por_ruta  True -> el fichero exportado lleva entorno, ruta y perfil en el
                     nombre, para que leer otra ruta del mismo entorno no machaque la
                     anterior: parameters_dev__API_STA__max.py

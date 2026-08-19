@@ -4,7 +4,7 @@ ParamsX es una herramienta diseñada para gestionar y organizar parámetros de A
 
 ## ⚠ Breaking change en la versión 2.0.0
 
-Si vienes de la 1.x tienes que **actualizar a mano tu `~/.xsoft/paramsx_config.py`**: `parameter_list` ya no es una lista de strings, ahora cada entrada es un diccionario con su convención de naming. La versión antigua **no es compatible** y ParamsX se niega a arrancar mostrando cómo migrarla. Detalle completo en el [CHANGELOG](CHANGELOG.md).
+Si vienes de la 1.x tienes que **actualizar a mano tu `~/.xsoft/paramsx_config.py`**: `parameter_list` ya no es una lista de strings, ahora cada entrada es un diccionario que declara su perfil. La versión antigua **no es compatible** y ParamsX se niega a arrancar mostrando cómo migrarla. Detalle completo en el [CHANGELOG](CHANGELOG.md).
 
 ### Estructura Recomendada
 La convención de naming es de 5 niveles, donde los últimos segmentos son opcionales según el caso:
@@ -77,10 +77,10 @@ Esto te permitirá mantener respaldos seguros o realizar migraciones/reorganizac
 
 4. Crear nuevo parámetro
 - Crea un parámetro desde cero sin salir de la herramienta. Te pedirá, en este orden:
-    - La ruta **sin el entorno**, igual que la declaras en `parameter_list`: el perfil de naming se encarga de colocarlo. Verás en pantalla la ruta resultante en AWS antes de seguir.
+    - La ruta **sin el entorno**, igual que la declaras en `parameter_list`: el perfil se encarga de colocarlo. Verás en pantalla la ruta resultante en AWS antes de seguir.
     - El valor: texto plano o JSON en una línea (por ejemplo `{"host": "x", "user": "y", "pass": "z"}`), que se valida antes de continuar.
     - Las tags obligatorias, si tienes `tags_activas = True`.
-- El perfil que se usa es el que declares en `convencion_nuevos`. Si tu perfil es de tipo `mixto`, escribe el `*` en la ruta para indicar dónde va el entorno.
+- El perfil que se usa es el que declares en `perfil_nuevos`. Si tu perfil es de tipo `mixto`, escribe el `*` en la ruta para indicar dónde va el entorno.
 - Antes de subirlo verás una pantalla de confirmación con la ruta, el valor y las tags. El parámetro se crea con `Overwrite=False`, así que nunca machaca uno existente.
 - Tras crearlo aparecerá la próxima vez que leas la ruta correspondiente de tu `parameter_list`.
 
@@ -115,7 +115,7 @@ Ejemplo del contenido de paramsx_config.py:
 ```python
 ## Configuraciones ParamsX
 
-# --- Perfiles de naming -------------------------------------------------------------
+# --- Perfiles -------------------------------------------------------------
 # Un perfil dice CÓMO se construye la ruta real en AWS a partir de la ruta que declaras
 # en 'parameter_list' y del entorno que eliges en el menú. Los nombres son tuyos: define
 # solo los que uses y llámalos como quieras. Un perfil tiene tres campos:
@@ -157,7 +157,7 @@ Ejemplo del contenido de paramsx_config.py:
 # Combina los tres campos como necesites: no hay una lista cerrada de perfiles. En el
 # README tienes más ejemplos.
 
-naming = {
+perfiles = {
     "min": {"posicion_entorno": "inicio", "case_entorno": "lower", "case_ruta": "lower"},
     "max": {"posicion_entorno": "final", "case_entorno": "upper", "case_ruta": "ninguno"},
     "mixto_max": {"posicion_entorno": "mixto", "case_entorno": "upper", "case_ruta": "ninguno"},
@@ -170,19 +170,19 @@ configuraciones = {
     "region_name": "eu-south-2",         # Cambiar por tu región de AWS
     "entornos": ['dev', 'pre', 'prod'],  # SIEMPRE en minúscula, es la lista canónica única
     "parameter_list": [
-        {"path": "/common", "convencion": "min"},      # -> /dev/common
-        {"path": "/rds", "convencion": "min"},         # -> /dev/rds
-        {"path": "/EMAIL", "convencion": "max"},       # -> /EMAIL/DEV
-        {"path": "/API/STA", "convencion": "max"},     # -> /API/STA/DEV
+        {"path": "/common", "perfil": "min"},      # -> /dev/common
+        {"path": "/rds", "perfil": "min"},         # -> /dev/rds
+        {"path": "/EMAIL", "perfil": "max"},       # -> /EMAIL/DEV
+        {"path": "/API/STA", "perfil": "max"},     # -> /API/STA/DEV
         # Con 'mixto' acotas por debajo del entorno: esto lee solo stan_ai, en vez de
         # todo lo que cuelga de /API/MULTIAPI/DEV
-        {"path": "/API/MULTIAPI/*/stan_ai", "convencion": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
+        {"path": "/API/MULTIAPI/*/stan_ai", "perfil": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
     ]
 }
 
-# Perfil de naming que se usa al crear un parámetro nuevo (opción 4 del menú).
-# Si no lo defines, se usa el primer perfil de 'naming'.
-convencion_nuevos = "min"
+# Perfil que se usa al crear un parámetro nuevo (opción 4 del menú).
+# Si no lo defines, se usa el primero de 'perfiles'.
+perfil_nuevos = "min"
 
 # ¿El nombre del fichero exportado incluye la ruta leída?
 #   False -> parameters_dev.py            (comportamiento de siempre)
@@ -224,9 +224,9 @@ tags_obligatorias = [
 ```
 Nota: Si el archivo paramsx_config.py ya existe, no será sobrescrito durante la instalación para proteger las configuraciones personalizadas.
 
-### Los perfiles de naming
+### Los perfiles
 
-Cada organización nombra sus parámetros a su manera, así que ParamsX no impone ninguna convención: **tú defines los perfiles que uses en el diccionario `naming` y les pones el nombre que quieras**. Cada entrada de `parameter_list` declara con qué perfil se construye su ruta completa. Los tres campos de un perfil y sus valores están explicados en el propio fichero de configuración, ahí arriba.
+Cada organización nombra sus parámetros a su manera, así que ParamsX no impone ninguna convención: **tú defines los perfiles que uses en el diccionario `perfiles` y les pones el nombre que quieras**. Cada entrada de `parameter_list` declara con qué perfil se construye su ruta completa, con la clave `perfil`. Los tres campos de un perfil y sus valores están explicados en el propio fichero de configuración, ahí arriba.
 
 **No hay una lista cerrada de perfiles.** Los tres campos se combinan libremente, así que la plantilla no intenta traértelos todos: define los dos o tres que use tu organización y olvídate del resto. `min` y `max` vienen predefinidos porque son los que ParamsX traía antes de que los perfiles fueran configurables.
 
@@ -246,15 +246,15 @@ En el nombre van el entorno, la ruta y el perfil, porque dos entradas pueden com
 
 | Entrada | Fichero |
 |---|---|
-| `{"path": "/API/STA", "convencion": "max"}` | `parameters_dev__API_STA__max.py` |
-| `{"path": "/API/*/STA", "convencion": "mixto_max"}` | `parameters_dev__API_env_STA__mixto_max.py` |
+| `{"path": "/API/STA", "perfil": "max"}` | `parameters_dev__API_STA__max.py` |
+| `{"path": "/API/*/STA", "perfil": "mixto_max"}` | `parameters_dev__API_env_STA__mixto_max.py` |
 
 ### Cómo acotar tu parameter_list (recomendación)
 
 `parameter_list` es solo tu vista de trabajo: **la seguridad real la impone IAM, no este fichero**. La recomendación de uso es:
 
-- **Admins**: pueden configurar rutas raíz amplias, por ejemplo `{"path": "/rds", "convencion": "min"}` → `/dev/rds`.
-- **Usuarios normales**: conviene acotar la ruta a lo que su rol IAM tiene realmente autorizado, por ejemplo `{"path": "/rds/cee-dev/api", "convencion": "min"}` → `/dev/rds/cee-dev/api`.
+- **Admins**: pueden configurar rutas raíz amplias, por ejemplo `{"path": "/rds", "perfil": "min"}` → `/dev/rds`.
+- **Usuarios normales**: conviene acotar la ruta a lo que su rol IAM tiene realmente autorizado, por ejemplo `{"path": "/rds/cee-dev/api", "perfil": "min"}` → `/dev/rds/cee-dev/api`.
 
 Si configuras una ruta más amplia que tus permisos, no pasa nada grave: ParamsX te avisará con un mensaje claro de acceso denegado en vez de una traza de boto3. Pero afinar la ruta te ahorra el error.
 
@@ -363,7 +363,7 @@ El programa mostrará un menú donde Podrás:
 - Crear un parámetro nuevo.
 
 ### Leer Parámetros:
-1. Selecciona la opción "Leer parámetros" en el menú. La lista muestra cada ruta con su perfil de naming, por ejemplo `/rds  [min]` o `/API/STA  [max]`.
+1. Selecciona la opción "Leer parámetros" en el menú. La lista muestra cada ruta con su perfil, por ejemplo `/rds  [min]` o `/API/STA  [max]`.
 2. Elige el prefijo y el entorno que deseas consultar.
 3. Los parámetros serán descargados y guardados en archivos como:
     - parameters_dev.py
@@ -384,7 +384,7 @@ El programa mostrará un menú donde Podrás:
 
 ### Crear un parámetro nuevo:
 1. Selecciona la opción "Crear nuevo parámetro" y elige el entorno.
-2. Escribe la ruta **sin el entorno**, como en tu `parameter_list`: ParamsX le aplica el perfil de `convencion_nuevos` y te enseña la ruta resultante en AWS para que la confirmes.
+2. Escribe la ruta **sin el entorno**, como en tu `parameter_list`: ParamsX le aplica el perfil de `perfil_nuevos` y te enseña la ruta resultante en AWS para que la confirmes.
 3. Escribe el valor: texto plano o JSON en una línea.
 4. Rellena las tags obligatorias (si `tags_activas = True`). `Environment` viene precargada con el entorno elegido. Con `obligatorias_vacias = True` puedes dejar alguna en blanco pulsando Enter: esas no se crearán en AWS.
 5. Confirma en la pantalla de resumen. Si es un parámetro de RDS y falta su contraparte (común o privado), verás el aviso de correlación de naming ahí mismo.
