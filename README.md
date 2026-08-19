@@ -108,10 +108,54 @@ Este comando creará automáticamente una carpeta de configuración en tu direct
 
 Dentro de esta carpeta, encontrarás el archivo paramsx_config.py. Este archivo contiene la configuración inicial que debes ajustar según tu entorno.
 
+Si ya tenías configuración de una versión anterior, `paramsx configure` **no la sobrescribe**: te dice qué opciones nuevas no tienes y con qué valor por defecto se están rellenando, y si la configuración es válida. Con `paramsx configure --ejemplo` además deja la plantilla de esta versión en `paramsx_config.ejemplo.py`, al lado de la tuya, para que compares sin tocar nada.
+
 Ejemplo del contenido de paramsx_config.py:
 
 ```python
 ## Configuraciones ParamsX
+
+# --- Perfiles de naming -------------------------------------------------------------
+# Un perfil dice CÓMO se construye la ruta real en AWS a partir de la ruta que declaras
+# en 'parameter_list' y del entorno que eliges en el menú. Los nombres son tuyos: define
+# solo los que uses y llámalos como quieras. Un perfil tiene tres campos:
+#
+#   campo             | valores                                  | qué decide
+#   ------------------+------------------------------------------+---------------------------
+#   posicion_entorno  | inicio | final | mixto | ninguno          | dónde va el entorno
+#   case_entorno      | lower | upper | capitalize                | cómo se escribe el entorno
+#   case_ruta         | lower | upper | capitalize | ninguno      | case de la ruta AL CREAR
+#
+# posicion_entorno -> dónde se coloca el entorno (ejemplos con el entorno 'dev'):
+#
+#   valor    | ruta declarada  | ruta real en AWS
+#   ---------+-----------------+--------------------------------------------------------
+#   inicio   | /rds            | /dev/rds
+#   final    | /API/STA        | /API/STA/DEV
+#   mixto    | /API/*/STA      | /API/DEV/STA    el '*' marca el sitio; uno y como segmento
+#   ninguno  | /api/sta/auth   | /api/sta/auth   una cuenta AWS por entorno; case_entorno da igual
+#
+# case_entorno -> cómo se escribe ese entorno en la ruta:
+#
+#   valor       | 'dev' se escribe | ruta real de /API/STA con posicion_entorno=final
+#   ------------+------------------+------------------------------------------------
+#   lower       | dev              | /API/STA/dev
+#   upper       | DEV              | /API/STA/DEV
+#   capitalize  | Dev              | /API/STA/Dev
+#
+# case_ruta -> a qué case se fuerza la ruta que TÚ escribes al CREAR un parámetro
+# (opción 4 del menú). No afecta a leer ni a editar: lo que ya existe en AWS se
+# respeta siempre tal cual esté.
+#
+#   valor       | si escribes /API/MULTIAPI/Token, se crea
+#   ------------+-----------------------------------------
+#   lower       | /api/multiapi/token
+#   upper       | /API/MULTIAPI/TOKEN
+#   capitalize  | /Api/Multiapi/Token
+#   ninguno     | /API/MULTIAPI/Token
+#
+# Combina los tres campos como necesites: no hay una lista cerrada de perfiles. En el
+# README tienes más ejemplos.
 
 naming = {
     "min": {"posicion_entorno": "inicio", "case_entorno": "lower", "case_ruta": "lower"},
@@ -130,97 +174,67 @@ configuraciones = {
         {"path": "/rds", "convencion": "min"},         # -> /dev/rds
         {"path": "/EMAIL", "convencion": "max"},       # -> /EMAIL/DEV
         {"path": "/API/STA", "convencion": "max"},     # -> /API/STA/DEV
+        # Con 'mixto' acotas por debajo del entorno: esto lee solo stan_ai, en vez de
+        # todo lo que cuelga de /API/MULTIAPI/DEV
         {"path": "/API/MULTIAPI/*/stan_ai", "convencion": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
     ]
 }
 
+# Perfil de naming que se usa al crear un parámetro nuevo (opción 4 del menú).
+# Si no lo defines, se usa el primer perfil de 'naming'.
 convencion_nuevos = "min"
 
+# ¿El nombre del fichero exportado incluye la ruta leída?
+#   False -> parameters_dev.py            (comportamiento de siempre)
+#   True  -> parameters_dev__API_STA__max.py  (uno por entrada y entorno: lleva el
+#            entorno, la ruta y el perfil, porque dos entradas pueden compartir ruta)
+# Ponlo en True si sueles leer varias rutas del mismo entorno y no quieres que la
+# segunda lectura te machaque el fichero de la primera.
 fichero_por_ruta = False
 
 
 ## Configuraciones Tags
 
+# Gestionar las tags de los parámetros: leerlas de AWS, exponerlas en el fichero
+# exportado para editarlas y validar las obligatorias al cargar.
+#   True  -> las tags viajan en el fichero y se validan.
+#   False -> no aparecen tags en el fichero y no se valida nada.
+# En cuentas cuyo control de acceso va por tags (ABAC vía IAM) esto debe estar en True.
 tags_activas = True
 
+# Solo aplica si tags_activas = True.
+#   False -> validación bloqueante: si a un parámetro le falta alguna tag obligatoria
+#            no se sube (ni su valor ni sus tags).
+#   True  -> se permiten vacías: el parámetro se sube igualmente y las tags sin valor
+#            simplemente NO se crean en AWS (no se suben como etiquetas vacías).
 obligatorias_vacias = False
 
+# Tags que se exigen en cada parámetro cuando tags_activas = True. La lista es libre:
+# estas 8 son las que sostienen el control de acceso ABAC vía IAM de nuestra cuenta.
 tags_obligatorias = [
-    "Application", "Environment", "Owner", "Project",
-    "Product", "Service", "Component", "ManagedBy",
+    "Application",
+    "Environment",
+    "Owner",
+    "Project",
+    "Product",
+    "Service",
+    "Component",
+    "ManagedBy",
 ]
 ```
 Nota: Si el archivo paramsx_config.py ya existe, no será sobrescrito durante la instalación para proteger las configuraciones personalizadas.
 
 ### Los perfiles de naming
 
-Cada organización nombra sus parámetros a su manera, así que ParamsX no impone ninguna convención: **tú defines los perfiles que uses en el diccionario `naming` y les pones el nombre que quieras**. Cada entrada de `parameter_list` declara con qué perfil se construye su ruta completa.
-
-Un perfil tiene tres campos:
-
-| Campo | Valores | Qué decide |
-|---|---|---|
-| `posicion_entorno` | `inicio` \| `final` \| `mixto` \| `ninguno` | Dónde va el entorno dentro de la ruta. |
-| `case_entorno` | `lower` \| `upper` \| `capitalize` | Cómo se escribe el entorno. |
-| `case_ruta` | `lower` \| `upper` \| `capitalize` \| `ninguno` | Case de la ruta al crear parámetros. |
-
-Y en detalle:
-
-**`posicion_entorno`** — dónde se coloca el entorno, con el entorno `dev`:
-
-| Valor | Ruta declarada | Ruta real en AWS | |
-|---|---|---|---|
-| `inicio` | `/rds` | `/dev/rds` | |
-| `final` | `/API/STA` | `/API/STA/DEV` | |
-| `mixto` | `/API/*/STA` | `/API/DEV/STA` | el `*` marca el sitio |
-| `ninguno` | `/api/sta/auth` | `/api/sta/auth` | una cuenta AWS por entorno |
-
-**`case_entorno`** — cómo se escribe ese entorno en la ruta:
-
-| Valor | `dev` se escribe | `/API/STA` con `posicion_entorno: final` |
-|---|---|---|
-| `lower` | `dev` | `/API/STA/dev` |
-| `upper` | `DEV` | `/API/STA/DEV` |
-| `capitalize` | `Dev` | `/API/STA/Dev` |
-
-**`case_ruta`** — a qué case se fuerza la ruta que escribes al **crear** un parámetro (opción 4). No afecta a leer ni a editar: lo que ya existe en AWS se respeta siempre tal cual esté.
-
-| Valor | Si escribes `/API/MULTIAPI/Token`, se crea |
-|---|---|
-| `lower` | `/api/multiapi/token` |
-| `upper` | `/API/MULTIAPI/TOKEN` |
-| `capitalize` | `/Api/Multiapi/Token` |
-| `ninguno` | `/API/MULTIAPI/Token` |
+Cada organización nombra sus parámetros a su manera, así que ParamsX no impone ninguna convención: **tú defines los perfiles que uses en el diccionario `naming` y les pones el nombre que quieras**. Cada entrada de `parameter_list` declara con qué perfil se construye su ruta completa. Los tres campos de un perfil y sus valores están explicados en el propio fichero de configuración, ahí arriba.
 
 **No hay una lista cerrada de perfiles.** Los tres campos se combinan libremente, así que la plantilla no intenta traértelos todos: define los dos o tres que use tu organización y olvídate del resto. `min` y `max` vienen predefinidos porque son los que ParamsX traía antes de que los perfiles fueran configurables.
 
-**`mixto` y el marcador `*`.** Cuando el entorno no va ni al principio ni al final, se marca su sitio con un `*` en la propia ruta. Es útil para acotar la lectura a un solo subárbol: con `/API/MULTIAPI/*/stan_ai` lees únicamente `/API/MULTIAPI/DEV/stan_ai`, en vez de todo lo que cuelga de `/API/MULTIAPI/DEV`. El `*` debe ser un segmento entero y aparecer **exactamente una vez**, y solo se admite en perfiles `mixto`: si el perfil y la ruta no cuentan la misma historia, ParamsX te lo dice al arrancar en vez de leer una ruta inexistente y devolverte una lista vacía.
+**Para qué sirve el `*`.** Además de colocar el entorno donde quieras, acota la lectura a un solo subárbol: con `/API/MULTIAPI/*/stan_ai` lees únicamente `/API/MULTIAPI/DEV/stan_ai`, en vez de todo lo que cuelga de `/API/MULTIAPI/DEV`. Debe ser un segmento entero, aparecer **exactamente una vez** y solo se admite en perfiles `mixto`: si el perfil y la ruta no cuentan la misma historia, ParamsX te lo dice al arrancar en vez de leer una ruta inexistente y devolverte una lista vacía.
 
-**`ninguno` y las cuentas sin entorno en la ruta.** Hay organizaciones que separan los entornos por cuenta de AWS y no meten `dev`/`prod` en el path. Con `posicion_entorno: "ninguno"` la ruta se usa tal cual; el selector de entorno del menú sigue existiendo, pero no toca la ruta. En este perfil el `case_entorno` es irrelevante, porque no se escribe ningún entorno.
+**Los entornos.** Ya no existe la lista `entornos_old`: el entorno sale siempre de la lista canónica `entornos` (en minúscula), aplicándole el `case_entorno` del perfil. Si en tus rutas se llama `staging` en vez de `pre`, ponlo así en `entornos`.
 
-Ya **no existe** la lista `entornos_old`: el entorno se escribe siempre a partir de la lista canónica `entornos` (en minúscula), aplicándole el `case_entorno` del perfil. Si en tus rutas el entorno se llama `staging` en vez de `pre`, ponlo así en `entornos`.
-
-Ejemplo completo de una `parameter_list` real, mezclando perfiles:
-
-```python
-    "parameter_list": [
-        {"path": "/common", "convencion": "min"},
-        {"path": "/rds", "convencion": "min"},
-        {"path": "/api", "convencion": "min"},
-        {"path": "/INFRA", "convencion": "max"},
-        {"path": "/API/STA", "convencion": "max"},
-        {"path": "/API/p15", "convencion": "max"},
-        {"path": "/API/MULTIAPI", "convencion": "max"},
-        {"path": "/APP/Alertas", "convencion": "max"},
-        {"path": "/BUCKETS", "convencion": "max"},
-        {"path": "/EMAIL", "convencion": "max"},
-        {"path": "/INFERENCIAS/TASA_DMI", "convencion": "max"},
-        {"path": "/CEE/CEXGEN", "convencion": "max"},
-        {"path": "/API/MULTIAPI/*/stan_ai", "convencion": "mixto_max"},
-    ]
-```
-
-Sobre mayúsculas y minúsculas: ParamsX **no renombra ni fuerza el case de los parámetros que ya existen**, los lee y edita tal cual estén. El `case_ruta` del perfil solo entra en juego al crear parámetros nuevos.
+Y ParamsX **no renombra ni fuerza el case de los parámetros que ya existen**: los lee y edita tal cual estén. El `case_ruta` del perfil solo entra en juego al crear parámetros nuevos.
 
 ### Un fichero por ruta: `fichero_por_ruta`
 
@@ -322,7 +336,17 @@ En algunos sistemas (especialmente en entornos corporativos como Windows), el PA
 ```source ~/.zshrc    # Para zsh```
 
 Una vez instalado, verifica que el comando paramsx esté disponible ejecutando:
-```paramsx --help```
+```paramsx --version```
+
+Comandos disponibles:
+
+| Comando | Qué hace |
+|---|---|
+| `paramsx` | Abre el menú interactivo (necesita configuración). |
+| `paramsx configure` | Crea la configuración la primera vez; si ya existe, la revisa sin tocarla. |
+| `paramsx configure --ejemplo` | Además deja la plantilla de esta versión al lado, para comparar. |
+| `paramsx --version` | Versión instalada. |
+| `paramsx --help` | Ayuda, con el resumen de todas las opciones de configuración. |
 
 
 ## Modo de empleo

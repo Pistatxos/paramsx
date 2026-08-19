@@ -7,6 +7,7 @@ import curses
 import importlib.util
 from botocore.exceptions import ClientError
 from . import paramsx_config as plantilla_config
+from . import __version__
 from .funcions import (
     draw_header, draw_footer, show_main_menu, show_comparison_results,
     show_environment_selection, show_message, show_parameter_selection,
@@ -47,13 +48,27 @@ Ya no existe 'entornos_old': el entorno se escribe a partir de la lista 'entorno
 que va siempre en minúscula, aplicándole el 'case_entorno' del perfil."""
 
 
-# Cargar configuraciones desde el archivo de usuario
-def load_config():
+# Opciones que viven fuera de 'configuraciones' y son opcionales: si el usuario no las
+# tiene, se usa el valor de la plantilla. Se listan para poder decirle qué le falta.
+CLAVES_OPCIONALES = (
+    "naming", "convencion_nuevos", "fichero_por_ruta",
+    "tags_activas", "obligatorias_vacias", "tags_obligatorias",
+)
+
+
+# Ejecutar el fichero de configuración del usuario y devolver el módulo resultante
+def cargar_modulo_config():
     if not os.path.exists(CONFIG_PATH):
         raise FileNotFoundError(f"No se encontró el archivo de configuración en {CONFIG_PATH}")
     spec = importlib.util.spec_from_file_location("config", CONFIG_PATH)
     modulo = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(modulo)
+    return modulo
+
+
+# Cargar configuraciones desde el archivo de usuario
+def load_config():
+    modulo = cargar_modulo_config()
 
     config = dict(modulo.configuraciones)
     # Todo lo que va fuera de 'configuraciones' es opcional en el fichero del usuario:
@@ -814,48 +829,141 @@ def main(stdscr, config=None):
 
 
 # Función para crear la configuración inicial
-def create_config():
+def create_config(escribir_ejemplo=False):
     config_dir = os.path.expanduser("~/.xsoft")
     os.makedirs(config_dir, exist_ok=True)
 
     config_file = os.path.join(config_dir, "paramsx_config.py")
-    if os.path.exists(config_file):
-        print(f"El archivo de configuración ya existe en {config_file}. No se sobrescribirá.")
-    else:
+    if not os.path.exists(config_file):
         # Se copia la plantilla del paquete para no duplicar el formato en dos sitios
         shutil.copyfile(PLANTILLA_PATH, config_file)
-        print(f"Archivo de configuración creado en {config_file}. Por favor, edítalo con tus valores personalizados.")
+        print(f"Archivo de configuración creado en {config_file}.")
+        print("Ábrelo y ajústalo con tus valores: viene con cada opción comentada.")
+        return
+
+    # Con configuración ya hecha no se toca NADA: solo se revisa y se informa.
+    print(f"Ya tienes configuración en {config_file}, no se sobrescribe.")
+    print()
+    revisar_config(config_file)
+
+    ejemplo_file = os.path.join(config_dir, "paramsx_config.ejemplo.py")
+    if escribir_ejemplo:
+        shutil.copyfile(PLANTILLA_PATH, ejemplo_file)
+        print(f"\nPlantilla de esta versión escrita en {ejemplo_file}.")
+        print("Es solo una referencia para comparar: ParamsX no la lee.")
+    else:
+        print("\nPara dejar la plantilla de esta versión al lado de la tuya y comparar:")
+        print("  paramsx configure --ejemplo")
+
+
+# Valor por defecto en una línea: el repr de 'naming' o de las tags ocupa media pantalla
+def resumir_valor(valor):
+    if isinstance(valor, dict):
+        return f"{len(valor)} perfiles ({', '.join(valor)})"
+    if isinstance(valor, (list, tuple)):
+        elementos = ", ".join(str(v) for v in valor)
+        if len(elementos) > 50:
+            elementos = ", ".join(str(v) for v in list(valor)[:3]) + ", ..."
+        return f"{len(valor)} elementos ({elementos})"
+    return repr(valor)
+
+
+# Revisar una configuración existente sin modificarla: qué opciones nuevas le faltan
+# (que no son un error, se usa el valor por defecto) y qué está mal de verdad.
+def revisar_config(config_file):
+    try:
+        modulo = cargar_modulo_config()
+    except Exception as e:
+        print(f"No se ha podido leer: {e}")
+        return
+
+    faltan = [clave for clave in CLAVES_OPCIONALES if not hasattr(modulo, clave)]
+    # 'abac' es el nombre antiguo de 'tags_activas': teniéndolo no falta nada
+    if "tags_activas" in faltan and hasattr(modulo, "abac"):
+        faltan.remove("tags_activas")
+        print("- 'abac' es el nombre antiguo de 'tags_activas'. Sigue funcionando, pero")
+        print("  renómbralo cuando puedas: el nuevo dice lo que hace.")
+
+    if faltan:
+        print("Opciones que no tienes y que ParamsX rellena con el valor por defecto:")
+        for clave in faltan:
+            print(f"  {clave:20} -> {resumir_valor(getattr(plantilla_config, clave))}")
+        print("Añádelas solo si quieres cambiarlas; sin ellas todo sigue funcionando igual.")
+    else:
+        print("No te falta ninguna opción de esta versión.")
+
+    try:
+        # Validar SIN normalizar: normalize_config pasa 'entornos' a minúscula y se
+        # perdería el aviso de que están en mayúscula en el fichero del usuario.
+        errores, avisos = validate_config(load_config())
+    except Exception as e:
+        print(f"\nNo se ha podido validar: {e}")
+        return
+
+    if avisos:
+        print()
+        for aviso in avisos:
+            print(aviso)
+    if errores:
+        print("\nErrores que hay que corregir:\n")
+        for error in errores:
+            print(f"{error}\n")
+    else:
+        print("\nLa configuración es válida.")
+
+
+# Versión instalada del paquete; si se ejecuta desde el código fuente, la del módulo
+def version_actual():
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            return version("paramsx")
+        except PackageNotFoundError:
+            return f"{__version__} (desde el código fuente, sin instalar)"
+    except ImportError:
+        return __version__
 
 # Mostrar ayuda
 def show_help():
+    # Texto plano, no f-string: lleva llaves literales de los dicts de ejemplo
     help_text = """
-ParamsX - Gestión de Parámetros de AWS SSM
+ParamsX __VERSION__ - Gestión de Parámetros de AWS SSM
 
 Comandos disponibles:
-  paramsx                Ejecuta el programa principal (requiere configuración previa).
-  paramsx configure      Crea el archivo de configuración inicial en ~/.xsoft/paramsx_config.py.
-  paramsx --help         Muestra esta ayuda.
+  paramsx                   Ejecuta el programa principal (requiere configuración previa).
+  paramsx configure         Crea ~/.xsoft/paramsx_config.py la primera vez. Si ya lo tienes,
+                            NO lo toca: revisa qué opciones nuevas te faltan y si es válido.
+  paramsx configure --ejemplo   Además deja la plantilla de esta versión al lado, como
+                            paramsx_config.ejemplo.py, para comparar sin tocar la tuya.
+  paramsx --version         Muestra la versión instalada.
+  paramsx --help            Muestra esta ayuda.
 
 Opciones del menú:
   1. Leer parámetros              Exporta a un fichero editable los parámetros de una ruta.
-  2. Cargar parámetros            Compara el fichero editado y aplica los cambios en AWS.
+  2. Cargar parámetros            Elige uno de los ficheros exportados que tengas en el
+                                  directorio, compara y aplica los cambios en AWS.
   3. Crear Backup de parámetros   Respalda una ruta, la lista completa o toda la cuenta.
   4. Crear nuevo parámetro        Crea un parámetro nuevo con el perfil 'convencion_nuevos'.
 
-Configuración (~/.xsoft/paramsx_config.py):
-  naming            Perfiles de naming. Cada uno dice dónde va el entorno en la ruta
-                    y cómo se escribe. Los nombres los eliges tú:
+Configuración (~/.xsoft/paramsx_config.py). El fichero trae comentada cada opción:
+  profile_name      Perfil de ~/.aws/credentials.
+  region_name       Región de AWS.
+  entornos          Lista de entornos, SIEMPRE en minúscula: ['dev', 'pre', 'prod'].
+                    Cada perfil de naming decide cómo se escriben en la ruta.
+  naming            Perfiles de naming: cómo se construye la ruta real en AWS. Los
+                    nombres los eliges tú y combinas estos tres campos:
                       posicion_entorno  'inicio'  /rds       -> /dev/rds
                                         'final'   /API/STA   -> /API/STA/DEV
-                                        'mixto'   /API/*/STA -> /API/dev/STA
+                                        'mixto'   /API/*/STA -> /API/DEV/STA
                                         'ninguno' /api/auth  -> /api/auth
                       case_entorno      'lower' | 'upper' | 'capitalize'
                       case_ruta         'lower' | 'upper' | 'capitalize' | 'ninguno'
-                                        (solo al crear parámetros)
+                                        (solo al crear parámetros, opción 4)
   parameter_list    Lista de dicts {"path": "/rds", "convencion": "<perfil de naming>"}.
   convencion_nuevos Perfil que usan los parámetros creados con la opción 4.
-  fichero_por_ruta  True -> el fichero exportado incluye la ruta en su nombre, para
-                    que leer otra ruta del mismo entorno no machaque la anterior.
+  fichero_por_ruta  True -> el fichero exportado lleva entorno, ruta y perfil en el
+                    nombre, para que leer otra ruta del mismo entorno no machaque la
+                    anterior: parameters_dev__API_STA__max.py
   tags_activas      True para gestionar las tags en el fichero exportado y validarlas.
                     (antes se llamaba 'abac'; ese nombre se sigue aceptando)
   tags_obligatorias Tags exigidas en cada parámetro cuando tags_activas = True.
@@ -868,23 +976,29 @@ Si necesitas más ayuda puedes leer el readme en GitHub o en Pypi:
 - https://pypi.org/project/paramsx/
 
 """
-    print(help_text)
+    print(help_text.replace("__VERSION__", version_actual()))
 
 # Entry point
 def entry_point():
     if len(sys.argv) > 1:
         command = sys.argv[1]
         if command in ["configure", "config", "configurar"]:
-            create_config()
+            create_config(escribir_ejemplo="--ejemplo" in sys.argv[2:])
             return
         elif command in ["--help", "-h"]:
             show_help()
             return
+        elif command in ["--version", "-v", "version"]:
+            print(f"paramsx {version_actual()}")
+            return
 
     # Verificar que exista el archivo de configuración
     if not os.path.exists(CONFIG_PATH):
-        print("Error: No se encontró el archivo de configuración.")
-        print("Usa 'paramsx configure' para crear uno automáticamente.")
+        print("ParamsX todavía no está configurado.")
+        print(f"No existe {CONFIG_PATH}.")
+        print()
+        print("Ejecuta 'paramsx configure': te crea el fichero con cada opción comentada")
+        print("para que lo ajustes con tu perfil de AWS, tus entornos y tus rutas.")
         return
 
     # Validar la configuración antes de entrar en la interfaz curses

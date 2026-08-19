@@ -15,6 +15,10 @@
 - **`convencion_nuevos`**: qué perfil usan los parámetros creados con la opción 4. Si no lo declaras, se usa el primer perfil de `naming`.
 - **Validación de la configuración al arrancar**, para que un naming mal declarado se vea como un error y no como una lista de parámetros vacía: perfil inexistente, `posicion_entorno`/`case_entorno`/`case_ruta` con valores inválidos, perfil `mixto` sin `*`, `*` en un perfil que no es `mixto`, más de un `*`, `*` pegado a un segmento, y aviso si dos entradas resuelven a la misma ruta.
 
+- **`paramsx --version`** (y `-v`), y la versión también en la cabecera de `paramsx --help`. La versión pasa a vivir en `paramsx/__init__.py` y `setup.py` la lee de ahí, para que el paquete y el comando no puedan decir cosas distintas.
+- **`paramsx configure` sobre una configuración que ya existe ya no se queda en "no se sobrescribirá".** Sigue sin tocar el fichero, pero ahora te dice qué opciones nuevas no tienes y con qué valor por defecto se rellenan, si usas el nombre antiguo `abac`, y si la configuración es válida. Con `paramsx configure --ejemplo` además deja la plantilla de la versión en `~/.xsoft/paramsx_config.ejemplo.py` para comparar, sin tocar la tuya.
+- Mensaje de primer arranque más claro cuando todavía no hay configuración, explicando qué hace `paramsx configure`.
+
 ### Cambiado
 
 - **`abac` pasa a llamarse `tags_activas`.** Es el mismo interruptor de siempre (gestionar y validar tags), con un nombre que dice lo que hace en vez de por qué lo queremos nosotros. **El nombre viejo se sigue aceptando**, así que las configuraciones de la 2.0 y la 2.1 funcionan sin tocar nada.

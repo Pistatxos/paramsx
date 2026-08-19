@@ -2,6 +2,7 @@ from setuptools import setup, find_packages
 from setuptools.command.install import install
 from distutils import log
 import os
+import re
 import sys
 import shutil
 import platform
@@ -73,10 +74,15 @@ class CustomInstallCommand(install):
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+## La versión vive en paramsx/__init__.py, para que 'paramsx --version' y el paquete
+## no puedan decir cosas distintas. Se lee con regex para no importar el paquete aquí.
+with open("paramsx/__init__.py", "r", encoding="utf-8") as fh:
+    version = re.search(r'^__version__\s*=\s*"([^"]+)"', fh.read(), re.M).group(1)
+
 # Configuración del paquete
 setup(
     name="paramsx",
-    version="2.2.0",
+    version=version,
     packages=find_packages(),
     include_package_data=True,
     package_data={
