@@ -1,227 +1,125 @@
 # ParamsX
 
-ParamsX es una herramienta diseñada para gestionar y organizar parámetros de AWS SSM de manera sencilla y eficiente.
+ParamsX es una herramienta de terminal para **gestionar parámetros de AWS Systems Manager Parameter Store** de forma sencilla y controlada.
 
-## ⚠ Breaking change en la versión 2.0.0
+Permite descargar parámetros a un fichero editable, comparar los cambios con AWS antes de aplicarlos, crear backups y añadir nuevos parámetros sin trabajar directamente desde la consola de AWS.
 
-Si vienes de la 1.x tienes que **actualizar a mano tu `~/.xsoft/paramsx_config.py`**: `parameter_list` ya no es una lista de strings, ahora cada entrada es un diccionario que declara su perfil. La versión antigua **no es compatible** y ParamsX se niega a arrancar mostrando cómo migrarla. Detalle completo en el [CHANGELOG](CHANGELOG.md).
+Entre otras cosas, ParamsX permite:
 
-### Estructura Recomendada
-La convención de naming es de 5 niveles, donde los últimos segmentos son opcionales según el caso:
+- Leer parámetros de AWS SSM por entorno y ruta.
+- Editarlos localmente.
+- Comparar valores, descripciones y tags antes de aplicar cambios (y también los tipos, si desactivas `forzar_securestring`).
+- Crear y eliminar parámetros.
+- Gestionar tags.
+- Trabajar con distintos esquemas de rutas mediante perfiles configurables.
+- Crear backups parciales o completos.
+- Trabajar con `SecureString` por defecto.
+- Detectar errores de permisos IAM y mostrarlos de forma legible.
 
-```
-/{entorno}/{servicio}/{nombre-servicio}/{servicio-adjunto}/{definición}
-```
-
-- `{entorno}`: SIEMPRE en minúscula (`dev`, `pre`, `prod`) y SIEMPRE el primer segmento, tanto en parámetros comunes como privados.
-- `{servicio}`: la categoría. Puede ser `common` (lectura por defecto para todo el equipo) o el nombre real del servicio (`rds`, `api`, `email`...).
-- `{definición}`: libre y descriptivo, no afecta a la lógica de permisos.
-
-Ejemplos:
-```
-/dev/api/multiapi/bbdd
-/dev/email/users
-/dev/common/email/users
-/dev/common/rds/cee-dev
-/dev/rds/cee-dev/api/alertas-premium
-/dev/api/alertas-premium/encryption_key
-/dev/api/sta/auth/jwt_secret
-```
-
-Ventajas:
-- Claridad: Fácil identificación de parámetros por entorno, servicio y componente.
-- Escalabilidad: Crecimiento estructurado de la configuración.
-- Permisos limpios: como el entorno va siempre en primera posición, `/{entorno}/common/*` es un prefijo puro y seguro para dar acceso de lectura por defecto a todo el equipo desde IAM. El acceso a los valores privados se controla por **tags** (ABAC), no por ruta.
-
-#### Correlación de naming en RDS
-En RDS, el segmento `{nombre-servicio}` del parámetro común debe coincidir **exactamente** con el del privado: es la clave que correlaciona `host/port/database` (común) con `user/password` (privado) al construir la conexión completa.
-
-```
-/dev/common/rds/cee-dev          -> host / port / database
-/dev/rds/cee-dev/api/alertas     -> user / password
-```
-
-Al crear un parámetro con la opción 4, ParamsX comprueba que exista la contraparte y **avisa** si no la encuentra. Es solo un aviso: no bloquea la creación.
-
-### ¿Cómo funciona?
-Al ejecutar ```paramsx``` desde la terminal, accedes a un menú interactivo con estas opciones principales:
-
-1. Leer parámetros
-- Navega por la lista de parámetros configurada en tu archivo de configuración y selecciona cuál descargar.
-- Elige el entorno deseado (por ejemplo, dev o prod).
-- Archivos generados:
-    - parameters_dev.py o parameters_prod.py → Edita estos archivos para modificar, añadir o eliminar parámetros (descripciones, valores y tags).
-    - parameters_dev_backup.py → Respaldo automático del archivo descargado, incluidas las tags.
-Los archivos se crean en la misma ruta desde donde ejecutas paramsx, evitando movernos innecesariamente entre carpetas.
-- Si tu rol IAM no tiene permisos sobre la ruta configurada, verás un mensaje claro en lugar de una traza de boto3:
-```
-⚠ No tienes permisos para leer: /dev/rds — pídele a un admin que te dé acceso, o acota
-la ruta en tu parameter_list a algo más específico (ej. /dev/rds/<sub-ruta>).
-```
-
-2. Comparar y actualizar parámetros
-- Una vez finalizados los ajustes en los parámetros descargados, selecciona esta opción.
-- El programa te muestra **los ficheros que tienes en el directorio** listos para cargar (los que conservan su backup al lado) y eliges cuál. No te pregunta por rutas ni entornos: el fichero ya sabe de dónde salió.
-- Con el elegido hace una comparación detallada, tanto de valores como de tags:
-    - Nuevos: Parámetros que serán añadidos.
-    - Modificados: Parámetros existentes cuyo valor y/o tags serán actualizados.
-    - Eliminados: Parámetros que serán borrados de AWS.
-Revisa los cambios antes de confirmar. Una vez completada la operación, los archivos temporales serán eliminados automáticamente para mantener el entorno limpio.
-
-3. Crear backups
-- Realiza copias de seguridad de los parámetros (valores y tags), eligiendo entre:
-    - Parámetros de un entorno específico.
-    - Todos los parámetros configurados en tu lista.
-    - Opcional: Descarga de todos los parámetros almacenados en tu cuenta de AWS.
-Esto te permitirá mantener respaldos seguros o realizar migraciones/reorganizaciones según sea necesario.
-
-4. Crear nuevo parámetro
-- Crea un parámetro desde cero sin salir de la herramienta. Te pedirá, en este orden:
-    - La ruta **sin el entorno**, igual que la declaras en `parameter_list`: el perfil se encarga de colocarlo. Verás en pantalla la ruta resultante en AWS antes de seguir.
-    - La descripción, opcional: para qué sirve el parámetro. Se guarda en AWS y luego se puede editar en el fichero exportado.
-    - El valor: texto plano o JSON en una línea (por ejemplo `{"host": "x", "user": "y", "pass": "z"}`), que se valida antes de continuar.
-    - Las tags obligatorias, si tienes `tags_activas = True`.
-- El perfil que se usa es el que declares en `perfil_nuevos`. Si tu perfil es de tipo `mixto`, escribe el `*` en la ruta para indicar dónde va el entorno.
-- Antes de subirlo verás una pantalla de confirmación con la ruta, el valor y las tags. El parámetro se crea con `Overwrite=False`, así que nunca machaca uno existente.
-- Tras crearlo aparecerá la próxima vez que leas la ruta correspondiente de tu `parameter_list`.
-
-### Requisitos
-ParamsX utiliza boto3 para interactuar con AWS. Asegúrate de tener configuradas tus credenciales de AWS antes de usarlo.
-
-Te interesa? pues sigue leyendo y explico como instalarlo.
-
+---
 
 ## Instalación
 
-Para instalar ParamsX, utiliza el comando:
+Instala ParamsX mediante pip:
 
-```pip install paramx```
+```bash
+pip install paramsx
+```
 
-### Configuración inicial
-Después de instalar el paquete, es necesario configurarlo antes de usarlo. Ejecuta:
+Después crea la configuración inicial:
 
-``` paramsx configure ```
+```bash
+paramsx configure
+```
 
-Este comando creará automáticamente una carpeta de configuración en tu directorio de usuario:
+Y ejecuta la herramienta:
 
-- Windows: C:\Users\<tu_usuario>\.xsoft
-- Linux/MacOS: /home/<tu_usuario>/.xsoft
+```bash
+paramsx
+```
 
-Dentro de esta carpeta, encontrarás el archivo paramsx_config.py. Este archivo contiene la configuración inicial que debes ajustar según tu entorno.
+Para comprobar la versión instalada:
 
-Si ya tenías configuración de una versión anterior, `paramsx configure` **no la sobrescribe**: te dice qué opciones nuevas no tienes y con qué valor por defecto se están rellenando, y si la configuración es válida. Con `paramsx configure --ejemplo` además deja la plantilla de esta versión en `paramsx_config.ejemplo.py`, al lado de la tuya, para que compares sin tocar nada.
+```bash
+paramsx --version
+```
 
-Ejemplo del contenido de paramsx_config.py:
+---
+
+## Configuración inicial
+
+La configuración se guarda en:
+
+**Windows**
+
+```text
+C:\Users\<tu_usuario>\.xsoft\paramsx_config.py
+```
+
+**Linux / macOS**
+
+```text
+~/.xsoft/paramsx_config.py
+```
+
+`paramsx configure` crea el fichero si todavía no existe.
+
+Si ya tienes una configuración, **no la sobrescribe**. ParamsX comprueba las opciones disponibles y mantiene tu configuración actual.
+
+También puedes generar una plantilla actualizada para compararla con la tuya:
+
+```bash
+paramsx configure --ejemplo
+```
+
+Esto crea:
+
+```text
+paramsx_config.ejemplo.py
+```
+
+junto a tu configuración actual.
+
+---
+
+## Configuración básica
+
+Una configuración sencilla podría ser:
 
 ```python
-## Configuraciones ParamsX
-
-# --- Perfiles -------------------------------------------------------------
-# Un perfil dice CÓMO se construye la ruta real en AWS a partir de la ruta que declaras
-# en 'parameter_list' y del entorno que eliges en el menú. Los nombres son tuyos: define
-# solo los que uses y llámalos como quieras. Un perfil tiene tres campos:
-#
-#   campo             | valores                                  | qué decide
-#   ------------------+------------------------------------------+---------------------------
-#   posicion_entorno  | inicio | final | mixto | ninguno          | dónde va el entorno
-#   case_entorno      | lower | upper | capitalize                | cómo se escribe el entorno
-#   case_ruta         | lower | upper | capitalize | ninguno      | case de la ruta AL CREAR
-#
-# posicion_entorno -> dónde se coloca el entorno (ejemplos con el entorno 'dev'):
-#
-#   valor    | ruta declarada  | ruta real en AWS
-#   ---------+-----------------+--------------------------------------------------------
-#   inicio   | /rds            | /dev/rds
-#   final    | /API/STA        | /API/STA/DEV
-#   mixto    | /API/*/STA      | /API/DEV/STA    el '*' marca el sitio; uno y como segmento
-#   ninguno  | /api/sta/auth   | /api/sta/auth   una cuenta AWS por entorno; case_entorno da igual
-#
-# case_entorno -> cómo se escribe ese entorno en la ruta:
-#
-#   valor       | 'dev' se escribe | ruta real de /API/STA con posicion_entorno=final
-#   ------------+------------------+------------------------------------------------
-#   lower       | dev              | /API/STA/dev
-#   upper       | DEV              | /API/STA/DEV
-#   capitalize  | Dev              | /API/STA/Dev
-#
-# case_ruta -> a qué case se fuerza la ruta que TÚ escribes al CREAR un parámetro
-# (opción 4 del menú). No afecta a leer ni a editar: lo que ya existe en AWS se
-# respeta siempre tal cual esté.
-#
-#   valor       | si escribes /API/MULTIAPI/Token, se crea
-#   ------------+-----------------------------------------
-#   lower       | /api/multiapi/token
-#   upper       | /API/MULTIAPI/TOKEN
-#   capitalize  | /Api/Multiapi/Token
-#   ninguno     | /API/MULTIAPI/Token
-#
-# Combina los tres campos como necesites: no hay una lista cerrada de perfiles. En el
-# README tienes más ejemplos.
-
 perfiles = {
-    "min": {"posicion_entorno": "inicio", "case_entorno": "lower", "case_ruta": "lower"},
-    "max": {"posicion_entorno": "final", "case_entorno": "upper", "case_ruta": "ninguno"},
-    "mixto_max": {"posicion_entorno": "mixto", "case_entorno": "upper", "case_ruta": "ninguno"},
-    # Crea los tuyos combinando los valores de la tabla, por ejemplo:
-    # "sin_entorno": {"posicion_entorno": "ninguno", "case_entorno": "lower", "case_ruta": "ninguno"},
+    "min": {
+        "posicion_entorno": "inicio",
+        "case_entorno": "lower",
+        "case_ruta": "lower",
+    }
 }
 
 configuraciones = {
-    "profile_name": "default",           # Cambiar por el nombre de tu perfil en ~/.aws/credentials
-    "region_name": "eu-south-2",         # Cambiar por tu región de AWS
-    "entornos": ['dev', 'pre', 'prod'],  # SIEMPRE en minúscula, es la lista canónica única
+    "profile_name": "default",
+    "region_name": "eu-south-2",
+
+    "entornos": [
+        "dev",
+        "pre",
+        "prod",
+    ],
+
     "parameter_list": [
-        {"path": "/common", "perfil": "min"},      # -> /dev/common
-        {"path": "/rds", "perfil": "min"},         # -> /dev/rds
-        {"path": "/EMAIL", "perfil": "max"},       # -> /EMAIL/DEV
-        {"path": "/API/STA", "perfil": "max"},     # -> /API/STA/DEV
-        # Con 'mixto' acotas por debajo del entorno: esto lee solo stan_ai, en vez de
-        # todo lo que cuelga de /API/MULTIAPI/DEV
-        {"path": "/API/MULTIAPI/*/stan_ai", "perfil": "mixto_max"},  # -> /API/MULTIAPI/DEV/stan_ai
-    ]
+        {"path": "/common", "perfil": "min"},
+        {"path": "/rds", "perfil": "min"},
+        {"path": "/api", "perfil": "min"},
+    ],
 }
 
-# Perfil que se usa al crear un parámetro nuevo (opción 4 del menú).
-# Si no lo defines, se usa el primero de 'perfiles'.
 perfil_nuevos = "min"
 
-# ¿El nombre del fichero exportado incluye la ruta leída?
-#   False -> parameters_dev.py            (comportamiento de siempre)
-#   True  -> parameters_dev__API_STA__max.py  (uno por entrada y entorno: lleva el
-#            entorno, la ruta y el perfil, porque dos entradas pueden compartir ruta)
-# Ponlo en True si sueles leer varias rutas del mismo entorno y no quieres que la
-# segunda lectura te machaque el fichero de la primera.
 fichero_por_ruta = False
-
-# ¿Todo lo que sube ParamsX va cifrado como SecureString?
-#   True  (por defecto) -> sí, siempre. Es lo recomendable: los parámetros de una cuenta
-#          suelen tener secretos, y así no depende de acordarse.
-#   False -> se respeta el tipo que ya tuviera el parámetro en AWS (String, StringList o
-#          SecureString): al actualizar no se manda el tipo, así que AWS conserva el suyo.
-#          En este modo el fichero exportado trae además un campo 'parameter_type' que
-#          puedes editar si quieres cambiarlo a propósito. Los parámetros que crees con
-#          la opción 4 se siguen creando como SecureString.
 forzar_securestring = True
 
-
-## Configuraciones Tags
-
-# Gestionar las tags de los parámetros: leerlas de AWS, exponerlas en el fichero
-# exportado para editarlas y validar las obligatorias al cargar.
-#   True  -> las tags viajan en el fichero y se validan.
-#   False -> no aparecen tags en el fichero y no se valida nada.
-# En cuentas cuyo control de acceso va por tags (ABAC vía IAM) esto debe estar en True.
 tags_activas = True
-
-# Solo aplica si tags_activas = True.
-#   False -> validación bloqueante: si a un parámetro le falta alguna tag obligatoria
-#            no se sube (ni su valor ni sus tags).
-#   True  -> se permiten vacías: el parámetro se sube igualmente y las tags sin valor
-#            simplemente NO se crean en AWS (no se suben como etiquetas vacías).
 obligatorias_vacias = False
 
-# Tags que se exigen en cada parámetro cuando tags_activas = True. La lista es libre:
-# estas 8 son las que sostienen el control de acceso ABAC vía IAM de nuestra cuenta.
 tags_obligatorias = [
     "Application",
     "Environment",
@@ -233,36 +131,477 @@ tags_obligatorias = [
     "ManagedBy",
 ]
 ```
-Nota: Si el archivo paramsx_config.py ya existe, no será sobrescrito durante la instalación para proteger las configuraciones personalizadas.
 
-### Los perfiles
+La plantilla generada con:
 
-Cada organización nombra sus parámetros a su manera, así que ParamsX no impone ninguna convención: **tú defines los perfiles que uses en el diccionario `perfiles` y les pones el nombre que quieras**. Cada entrada de `parameter_list` declara con qué perfil se construye su ruta completa, con la clave `perfil`. Los tres campos de un perfil y sus valores están explicados en el propio fichero de configuración, ahí arriba.
+```bash
+paramsx configure --ejemplo
+```
 
-**No hay una lista cerrada de perfiles.** Los tres campos se combinan libremente, así que la plantilla no intenta traértelos todos: define los dos o tres que use tu organización y olvídate del resto. `min` y `max` vienen predefinidos porque son los que ParamsX traía antes de que los perfiles fueran configurables.
+incluye comentarios y ejemplos de todas las opciones disponibles.
 
-**Para qué sirve el `*`.** Además de colocar el entorno donde quieras, acota la lectura a un solo subárbol: con `/API/MULTIAPI/*/stan_ai` lees únicamente `/API/MULTIAPI/DEV/stan_ai`, en vez de todo lo que cuelga de `/API/MULTIAPI/DEV`. Debe ser un segmento entero, aparecer **exactamente una vez** y solo se admite en perfiles `mixto`: si el perfil y la ruta no cuentan la misma historia, ParamsX te lo dice al arrancar en vez de leer una ruta inexistente y devolverte una lista vacía.
+---
 
-**Los entornos.** Ya no existe la lista `entornos_old`: el entorno sale siempre de la lista canónica `entornos` (en minúscula), aplicándole el `case_entorno` del perfil. Si en tus rutas se llama `staging` en vez de `pre`, ponlo así en `entornos`.
+# Cómo funciona
 
-Y ParamsX **no renombra ni fuerza el case de los parámetros que ya existen**: los lee y edita tal cual estén. El `case_ruta` del perfil solo entra en juego al crear parámetros nuevos.
+El flujo habitual de ParamsX es:
 
-### Un fichero por ruta: `fichero_por_ruta`
+```text
+AWS SSM
+   ↓
+Leer parámetros
+   ↓
+parameters_dev.py
+   ↓
+Editar localmente
+   ↓
+Comparar con AWS
+   ↓
+Revisar cambios
+   ↓
+Confirmar
+   ↓
+AWS SSM
+```
 
-Al leer una ruta se generan `parameters_{entorno}.py` y su backup. Ese nombre depende solo del entorno, así que si lees una segunda ruta del mismo entorno **machacas el fichero de la primera**. Por defecto ParamsX te avisa y te pide confirmación antes de sobrescribir.
+Al ejecutar:
 
-Si trabajas a menudo con varias rutas del mismo entorno, pon `fichero_por_ruta = True`: cada entrada pasa a tener su propio fichero y dejan de pisarse. Al cargar los verás todos en la lista y eliges cuál aplicar.
+```bash
+paramsx
+```
 
-En el nombre van el entorno, la ruta y el perfil, porque dos entradas pueden compartir la ruta declarada y apuntar a sitios distintos:
+se muestra un menú con las principales operaciones:
 
-| Entrada | Fichero |
+1. Leer parámetros.
+2. Comparar y actualizar parámetros.
+3. Crear backups.
+4. Crear un nuevo parámetro.
+
+---
+
+## 1. Leer parámetros
+
+Selecciona una de las rutas configuradas en `parameter_list` y el entorno que quieras consultar.
+
+Por ejemplo:
+
+```python
+{"path": "/rds", "perfil": "min"}
+```
+
+con el entorno:
+
+```text
+dev
+```
+
+puede resolver a:
+
+```text
+/dev/rds
+```
+
+ParamsX descarga los parámetros y genera:
+
+```text
+parameters_dev.py
+parameters_dev_backup.py
+```
+
+Los archivos se crean en el directorio desde el que ejecutaste `paramsx`.
+
+Después puedes editar `parameters_dev.py` con tu editor habitual.
+
+El backup permite conocer el estado original y calcular exactamente qué has cambiado.
+
+---
+
+## 2. Comparar y actualizar parámetros
+
+Una vez hayas modificado el fichero:
+
+```text
+parameters_dev.py
+```
+
+selecciona la opción de carga.
+
+ParamsX detecta automáticamente los ficheros disponibles en el directorio que conservan su correspondiente backup.
+
+Antes de modificar AWS muestra una comparación con:
+
+- **Nuevos**: parámetros que se crearán.
+- **Modificados**: parámetros cuyo valor, descripción, tipo o tags han cambiado.
+- **Eliminados**: parámetros que existen en AWS pero ya no aparecen en el fichero.
+
+Nada se aplica hasta que confirmes los cambios.
+
+Si la operación termina correctamente, los ficheros temporales se eliminan.
+
+Si algún parámetro no puede procesarse, por ejemplo porque le faltan tags obligatorias, los ficheros se conservan para que puedas corregirlos y volver a ejecutar la carga.
+
+---
+
+## 3. Crear backups
+
+ParamsX permite crear tres tipos de backup.
+
+### Una ruta concreta
+
+Genera un backup de una combinación determinada de ruta y entorno.
+
+Útil para trabajar únicamente con una aplicación o servicio.
+
+### Todas las rutas configuradas
+
+Genera un fichero:
+
+```text
+total_listed_parameters_backup.py
+```
+
+con todos los parámetros definidos mediante `parameter_list`.
+
+### Todos los parámetros de la cuenta
+
+Lee Parameter Store desde:
+
+```text
+/
+```
+
+y genera:
+
+```text
+all_parameters_backup.py
+```
+
+Esta opción es útil antes de reorganizaciones o migraciones importantes.
+
+---
+
+## 4. Crear un parámetro nuevo
+
+ParamsX también permite crear parámetros sin salir de la herramienta.
+
+Selecciona:
+
+```text
+Crear nuevo parámetro
+```
+
+y elige el entorno.
+
+Después introduce la ruta **sin el entorno**, igual que la declararías en `parameter_list`.
+
+Por ejemplo:
+
+```text
+/rds/cee-dev/api/alertas
+```
+
+Si el perfil utiliza el entorno al inicio y seleccionas `dev`, ParamsX construirá:
+
+```text
+/dev/rds/cee-dev/api/alertas
+```
+
+Antes de continuar verás siempre la ruta final que se creará en AWS.
+
+Después podrás introducir:
+
+- descripción;
+- valor;
+- tags obligatorias, si están activadas.
+
+El valor puede ser texto plano o JSON en una línea:
+
+```json
+{"host": "db.example.com", "user": "api", "pass": "secret"}
+```
+
+Antes de crear el parámetro se muestra una pantalla de confirmación.
+
+Los parámetros nuevos se crean con:
+
+```text
+Overwrite=False
+```
+
+por lo que ParamsX nunca sobrescribe accidentalmente un parámetro existente mediante esta opción.
+
+---
+
+# Perfiles
+
+No todas las organizaciones utilizan la misma estructura para sus parámetros.
+
+Por eso ParamsX **no impone una convención de rutas**.
+
+Cada entrada de `parameter_list` utiliza un perfil que define cómo construir la ruta real de AWS.
+
+Un perfil tiene tres propiedades:
+
+| Campo | Valores |
 |---|---|
-| `{"path": "/API/STA", "perfil": "max"}` | `parameters_dev__API_STA__max.py` |
-| `{"path": "/API/*/STA", "perfil": "mixto_max"}` | `parameters_dev__API_env_STA__mixto_max.py` |
+| `posicion_entorno` | `inicio`, `final`, `mixto`, `ninguno` |
+| `case_entorno` | `lower`, `upper`, `capitalize` |
+| `case_ruta` | `lower`, `upper`, `capitalize`, `ninguno` |
 
-### La descripción de los parámetros
+Por ejemplo:
 
-El fichero exportado trae un campo `parameter_description` **debajo del nombre y antes del valor**. Se lee de AWS, se edita como cualquier otro campo y se aplica al cargar:
+```python
+perfiles = {
+    "min": {
+        "posicion_entorno": "inicio",
+        "case_entorno": "lower",
+        "case_ruta": "lower",
+    },
+
+    "max": {
+        "posicion_entorno": "final",
+        "case_entorno": "upper",
+        "case_ruta": "ninguno",
+    },
+
+    "mixto_max": {
+        "posicion_entorno": "mixto",
+        "case_entorno": "upper",
+        "case_ruta": "ninguno",
+    },
+}
+```
+
+Los nombres de los perfiles los eliges tú: define solo los que utilice tu organización.
+
+---
+
+## Posición del entorno
+
+### `inicio`
+
+```text
+Ruta declarada: /rds
+Entorno: dev
+Perfil: min
+
+→ /dev/rds
+```
+
+### `final`
+
+```text
+Ruta declarada: /API/STA
+Entorno: dev
+Perfil: max
+
+→ /API/STA/DEV
+```
+
+### `mixto`
+
+Permite indicar exactamente dónde debe insertarse el entorno mediante `*`.
+
+```text
+Ruta declarada: /API/MULTIAPI/*/stan_ai
+Entorno: dev
+Perfil: mixto_max
+
+→ /API/MULTIAPI/DEV/stan_ai
+```
+
+El `*`:
+
+- debe ocupar un segmento completo;
+- debe aparecer exactamente una vez;
+- solo puede utilizarse con perfiles `mixto`.
+
+Además de colocar el entorno, permite acotar la lectura a un subárbol concreto.
+
+### `ninguno`
+
+No añade ningún entorno a la ruta.
+
+Por ejemplo:
+
+```text
+/api/sta/auth
+```
+
+se utiliza tal cual.
+
+Esto puede resultar útil cuando cada entorno utiliza una cuenta AWS diferente.
+
+---
+
+## Case del entorno
+
+`case_entorno` decide cómo se escribe el entorno.
+
+Para el entorno canónico:
+
+```text
+dev
+```
+
+los posibles resultados son:
+
+```text
+lower       → dev
+upper       → DEV
+capitalize  → Dev
+```
+
+La lista definida en:
+
+```python
+configuraciones["entornos"]
+```
+
+es siempre la lista canónica.
+
+Por ejemplo:
+
+```python
+"entornos": ["dev", "pre", "prod"]
+```
+
+Si tu organización utiliza `staging` en vez de `pre`, simplemente debes configurarlo ahí.
+
+---
+
+## Case de la ruta
+
+`case_ruta` solo se utiliza **al crear parámetros nuevos**.
+
+Por ejemplo, si escribes:
+
+```text
+/API/MULTIAPI/Token
+```
+
+el resultado puede ser:
+
+```text
+lower       → /api/multiapi/token
+upper       → /API/MULTIAPI/TOKEN
+capitalize  → /Api/Multiapi/Token
+ninguno     → /API/MULTIAPI/Token
+```
+
+ParamsX **no renombra ni modifica el case de parámetros que ya existen en AWS**.
+
+Los parámetros existentes siempre se leen y editan respetando exactamente su ruta actual.
+
+---
+
+# `parameter_list`
+
+`parameter_list` define las rutas con las que quieres trabajar.
+
+Por ejemplo:
+
+```python
+"parameter_list": [
+    {"path": "/common", "perfil": "min"},
+    {"path": "/rds", "perfil": "min"},
+    {"path": "/EMAIL", "perfil": "max"},
+    {"path": "/API/STA", "perfil": "max"},
+    {"path": "/API/MULTIAPI/*/stan_ai", "perfil": "mixto_max"},
+]
+```
+
+Cada entrada contiene:
+
+```python
+{
+    "path": "...",
+    "perfil": "..."
+}
+```
+
+El perfil determina cómo transformar esa ruta en la ruta real de AWS, y tiene que estar definido en `perfiles`.
+
+---
+
+## Acotar las rutas
+
+`parameter_list` es únicamente tu **vista de trabajo**.
+
+La seguridad real siempre la controla **IAM**.
+
+Un administrador podría trabajar con:
+
+```python
+{"path": "/rds", "perfil": "min"}
+```
+
+que resolvería a:
+
+```text
+/dev/rds
+```
+
+Mientras que un usuario con permisos más limitados podría utilizar:
+
+```python
+{"path": "/rds/cee-dev/api", "perfil": "min"}
+```
+
+que resolvería a:
+
+```text
+/dev/rds/cee-dev/api
+```
+
+Si intentas leer una ruta para la que no tienes permisos, ParamsX muestra un error legible en lugar de una traza completa de boto3.
+
+Por ejemplo:
+
+```text
+⚠ No tienes permisos para leer: /dev/rds
+
+Pídele a un administrador que te dé acceso o configura
+una ruta más específica en parameter_list.
+```
+
+---
+
+# Un fichero por ruta
+
+Por defecto, ParamsX utiliza nombres como:
+
+```text
+parameters_dev.py
+parameters_dev_backup.py
+```
+
+Esto significa que si lees dos rutas distintas del mismo entorno, la segunda lectura podría reemplazar el fichero de la primera.
+
+ParamsX pide confirmación antes de hacerlo.
+
+Si trabajas habitualmente con varias rutas del mismo entorno puedes activar:
+
+```python
+fichero_por_ruta = True
+```
+
+En ese caso cada combinación de ruta y perfil genera su propio fichero.
+
+Por ejemplo:
+
+| Configuración | Fichero |
+|---|---|
+| `/API/STA` + `max` | `parameters_dev__API_STA__max.py` |
+| `/API/*/STA` + `mixto_max` | `parameters_dev__API_env_STA__mixto_max.py` |
+
+---
+
+# Descripción de los parámetros
+
+ParamsX también puede leer y modificar la descripción de un parámetro.
+
+El fichero exportado puede contener:
 
 ```python
 parametros = [
@@ -272,59 +611,112 @@ parametros = [
 ]
 ```
 
-Dos cosas que conviene saber:
+Para leer las descripciones es necesario que el rol tenga:
 
-- **Hace falta el permiso `ssm:DescribeParameters`.** La descripción no viaja en `GetParametersByPath` como el valor: es un metadato y se pide con `DescribeParameters`. Si tu rol no lo tiene, ParamsX te avisa, el campo **no aparece** en el fichero y al cargar no se toca la descripción que haya en AWS.
-- **Al actualizar un parámetro, AWS reescribe su definición entera.** Por eso ParamsX manda siempre la descripción del fichero cuando cambia el valor, aunque no la hayas tocado: si no la mandara, se perdería. Y como no existe una API para cambiar solo la descripción, editarla crea una versión nueva del parámetro igual que cambiar el valor.
+```text
+ssm:DescribeParameters
+```
 
-Un cambio de descripción se ve en la pantalla de confirmación como `Modificado (descripción)`, y si cambias las dos cosas, `Modificado (valor | descripción)`.
+La descripción no viaja junto al valor: es un metadato y se pide con una llamada aparte.
 
-### Cifrado: `forzar_securestring`
+Si el rol no dispone de este permiso:
 
-ParamsX sube todo como **SecureString** por defecto, y así se recomienda dejarlo: los parámetros de una cuenta acaban teniendo secretos, y con esto no depende de que nadie se acuerde.
+- ParamsX muestra un aviso.
+- `parameter_description` no aparece en el fichero.
+- La descripción existente en AWS no se modifica.
 
-| `forzar_securestring` | Qué hace |
+Un cambio de descripción aparece en la comparación como:
+
+```text
+Modificado (descripción)
+```
+
+o, si también cambia el valor:
+
+```text
+Modificado (valor | descripción)
+```
+
+---
+
+# SecureString
+
+Por defecto:
+
+```python
+forzar_securestring = True
+```
+
+ParamsX guarda los parámetros como:
+
+```text
+SecureString
+```
+
+Esto evita depender de que cada usuario recuerde seleccionar manualmente el tipo cifrado.
+
+| Valor | Comportamiento |
 |---|---|
-| `True` (por defecto) | Todo lo que se sube va cifrado como `SecureString`, sea del tipo que sea en AWS. |
-| `False` | Se respeta el tipo que ya tuviera el parámetro (`String`, `StringList` o `SecureString`): al actualizar no se manda el tipo, y AWS conserva el suyo. El fichero exportado trae además un campo `parameter_type` que puedes editar si quieres cambiarlo a propósito, y ese cambio cuenta como uno más: verás `Modificado (tipo: SecureString)`. |
+| `True` | Todo lo que se sube se guarda como `SecureString`. |
+| `False` | Los parámetros existentes conservan su tipo (`String`, `StringList` o `SecureString`). |
 
-Los parámetros que creas con la opción 4 se crean siempre como `SecureString`, en los dos modos.
+Con `False` nada se descifra: lo que ya era `SecureString` lo sigue siendo. Lo único que cambia es que ParamsX deja de convertir los que no lo son.
 
-El tipo se lee de la misma llamada que el valor, así que **no hace falta ningún permiso extra** para esto (a diferencia de la descripción).
+Con:
 
-### Cómo acotar tu parameter_list (recomendación)
-
-`parameter_list` es solo tu vista de trabajo: **la seguridad real la impone IAM, no este fichero**. La recomendación de uso es:
-
-- **Admins**: pueden configurar rutas raíz amplias, por ejemplo `{"path": "/rds", "perfil": "min"}` → `/dev/rds`.
-- **Usuarios normales**: conviene acotar la ruta a lo que su rol IAM tiene realmente autorizado, por ejemplo `{"path": "/rds/cee-dev/api", "perfil": "min"}` → `/dev/rds/cee-dev/api`.
-
-Si configuras una ruta más amplia que tus permisos, no pasa nada grave: ParamsX te avisará con un mensaje claro de acceso denegado en vez de una traza de boto3. Pero afinar la ruta te ahorra el error.
-
-### Tags obligatorias y el flag `tags_activas`
-
-En nuestra cuenta, el control de acceso a los valores privados va por **tags IAM** (condición `aws:ResourceTag/${TagKey}` sobre `GetParameter`), no por restricción de path — la única excepción es `/{entorno}/common/*`, que se concede por prefijo de ruta. Por eso estas 8 tags son ahí el mínimo no negociable: son las que sostienen todo el modelo ABAC.
-
-```
-Application, Environment, Owner, Project, Product, Service, Component, ManagedBy
+```python
+forzar_securestring = False
 ```
 
-La lista vive en `tags_obligatorias`, dentro de tu propio `paramsx_config.py`: es libre, pon las que use tu organización.
+el fichero exportado también incluye:
 
-El flag `tags_activas` decide si ParamsX gestiona tags:
+```python
+parameter_type
+```
 
-- **`tags_activas = True`**: al leer parámetros, el fichero exportado incluye un campo por tag con su valor actual en AWS (vacío si el parámetro es legacy y no la tiene). Al cargar, es **obligatorio** que todas tengan valor.
-- **`tags_activas = False`**: las tags no aparecen en el fichero exportado en absoluto y no se valida nada (comportamiento de la 1.x).
+para permitir modificar explícitamente el tipo.
 
-Este flag se llamaba `abac` en la 2.0 y la 2.1. El nombre viejo se sigue aceptando, así que no tienes que tocar tu configuración, pero `tags_activas` describe lo que hace de verdad: activar la gestión de tags. Que esas tags sostengan un modelo ABAC es el motivo por el que tú las quieres, no lo que hace el flag.
+Los parámetros creados desde la opción **Crear nuevo parámetro** se crean siempre como `SecureString`.
 
-Formato del fichero exportado con `tags_activas = True`:
+---
+
+# Tags
+
+La gestión de tags se controla mediante:
+
+```python
+tags_activas = True
+```
+
+Con las tags activadas:
+
+- se leen las tags actuales desde AWS;
+- aparecen en el fichero exportado;
+- se pueden modificar;
+- se validan antes de aplicar cambios.
+
+Por ejemplo:
+
+```python
+tags_obligatorias = [
+    "Application",
+    "Environment",
+    "Owner",
+    "Project",
+    "Product",
+    "Service",
+    "Component",
+    "ManagedBy",
+]
+```
+
+El fichero exportado puede contener:
 
 ```python
 parametros = [
     {'parameter_name': '/dev/email/users',
      'parameter_description': "Buzon que recibe los avisos de altas",
-     'parameter_value': """agpetrovici@stanalytics.es""",
+     'parameter_value': """usuario@example.com""",
      'tagApplication': "",
      'tagEnvironment': "",
      'tagOwner': "",
@@ -337,148 +729,269 @@ parametros = [
 ]
 ```
 
-Este formato con tags **solo existe en el fichero temporal que genera ParamsX**: no se ve en la consola de AWS ni se persiste en ningún otro sitio. Tiene el mismo ciclo de vida que el resto del fichero (se genera, se edita, se compara, se aplica y se borra al confirmar).
+La lista de tags es completamente configurable.
 
-#### `obligatorias_vacias`: cuando alguna tag tiene que ir vacía
+ParamsX no obliga a utilizar estas ocho.
 
-En la práctica hay parámetros a los que no les aplica alguna de las 8 tags. Ese caso se controla con `obligatorias_vacias`, y solo tiene efecto si `tags_activas = True`:
+---
 
-| `obligatorias_vacias` | Comportamiento |
+## Tags obligatorias vacías
+
+El comportamiento se controla mediante:
+
+```python
+obligatorias_vacias = False
+```
+
+### `False`
+
+Es el comportamiento por defecto.
+
+Si falta una tag obligatoria:
+
+- ese parámetro no se sube;
+- tampoco se modifican su valor ni sus tags;
+- ParamsX muestra qué tags faltan.
+
+El resto de parámetros válidos del fichero sí pueden procesarse.
+
+### `True`
+
+Permite dejar tags vacías.
+
+Las tags vacías **no se crean en AWS**.
+
+Hay una diferencia importante entre una tag vacía y eliminar una existente:
+
+- Si la tag nunca existió y está vacía, simplemente no se crea.
+- Si la tag ya existía en AWS y vacías su valor en el fichero, ParamsX interpreta que quieres eliminarla.
+
+Las tags del sistema:
+
+```text
+aws:*
+```
+
+no se exportan ni se modifican.
+
+---
+
+# IAM y seguridad
+
+ParamsX no sustituye la seguridad de AWS.
+
+Los permisos reales siempre los determina IAM.
+
+`parameter_list` únicamente indica qué rutas intentará consultar ParamsX.
+
+Por ejemplo, una organización puede permitir lectura general sobre:
+
+```text
+/{entorno}/common/*
+```
+
+y controlar parámetros privados mediante tags IAM y políticas ABAC.
+
+La estructura exacta depende de la organización.
+
+---
+
+# Ejemplo de convención de rutas
+
+ParamsX no obliga a utilizar ninguna convención concreta, pero una estructura posible es:
+
+```text
+/{entorno}/{servicio}/{nombre-servicio}/{servicio-adjunto}/{definición}
+```
+
+Por ejemplo:
+
+```text
+/dev/api/multiapi/bbdd
+/dev/email/users
+/dev/common/email/users
+/dev/common/rds/cee-dev
+/dev/rds/cee-dev/api/alertas-premium
+/dev/api/alertas-premium/encryption_key
+/dev/api/sta/auth/jwt_secret
+```
+
+En esta estructura:
+
+- `{entorno}` identifica `dev`, `pre`, `prod`, etc.
+- `{servicio}` identifica la categoría o servicio.
+- `{definición}` describe el dato almacenado.
+
+Esta es solo una posible convención. Los perfiles permiten adaptar ParamsX a otros esquemas existentes.
+
+---
+
+## Correlación de parámetros RDS
+
+Si utilizas una estructura donde los datos públicos y privados de una conexión RDS están separados, el nombre del servicio debe coincidir.
+
+Por ejemplo:
+
+```text
+/dev/common/rds/cee-dev
+```
+
+puede contener:
+
+```text
+host
+port
+database
+```
+
+mientras:
+
+```text
+/dev/rds/cee-dev/api/alertas
+```
+
+puede contener:
+
+```text
+user
+password
+```
+
+`cee-dev` permite correlacionar ambas partes.
+
+Al crear un parámetro mediante la opción 4, ParamsX puede comprobar que exista la contraparte correspondiente.
+
+Si no existe, muestra un aviso.
+
+El aviso no bloquea la creación.
+
+---
+
+# Configuración del PATH
+
+En algunos entornos el comando `paramsx` puede no quedar disponible automáticamente después de instalar el paquete.
+
+## Windows
+
+Añade al `PATH` de usuario:
+
+```text
+C:\Users\<tu_usuario>\AppData\Roaming\Python\Python<version>\Scripts
+```
+
+Por ejemplo, para Python 3.12:
+
+```text
+C:\Users\<tu_usuario>\AppData\Roaming\Python\Python312\Scripts
+```
+
+Después abre una terminal nueva.
+
+## Linux / macOS
+
+Añade a tu configuración de shell:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Para bash:
+
+```bash
+source ~/.bashrc
+```
+
+Para zsh:
+
+```bash
+source ~/.zshrc
+```
+
+Comprueba finalmente:
+
+```bash
+paramsx --version
+```
+
+---
+
+# Comandos disponibles
+
+| Comando | Descripción |
 |---|---|
-| `False` (por defecto) | Validación bloqueante: si a un parámetro le falta cualquiera de las tags obligatorias no se sube **ni su valor ni sus tags**. Al crear un parámetro tampoco te deja continuar dejando una tag en blanco. |
-| `True` | Se permiten vacías: el parámetro se sube igualmente y **las tags sin valor no se crean en AWS** (no se suben como etiquetas vacías). En el informe de carga verás qué parámetros han quedado con tags vacías y cuáles son. |
+| `paramsx` | Abre el menú interactivo. |
+| `paramsx configure` | Crea o comprueba la configuración. |
+| `paramsx configure --ejemplo` | Genera la plantilla completa de configuración. |
+| `paramsx --version` | Muestra la versión instalada. |
+| `paramsx --help` | Muestra la ayuda disponible. |
 
-Ojo con la diferencia entre "vacía" y "borrada": con `obligatorias_vacias = True`, una tag que se deja en blanco y **nunca existió** simplemente no se crea; pero si esa tag **ya tenía valor en AWS** y la vacías en el fichero, se interpreta como que quieres borrarla y se elimina del parámetro. Es la forma de quitar una tag.
+---
 
-Detalles del comportamiento con `tags_activas = True`:
+# Migración desde ParamsX 1.x
 
-- La validación es **por parámetro**, no global: con `obligatorias_vacias = False`, si a uno le falta cualquiera de las tags obligatorias no se sube ni su valor ni sus tags, y verás un error indicando qué tags faltan y a qué `parameter_name`. El resto de parámetros del fichero que estén completos se suben con normalidad.
-- Cuando una carga queda a medias, los ficheros `parameters_{entorno}.py` y su backup **no se borran**, para que corrijas lo que falta y vuelvas a cargar. El backup se resincroniza con lo ya aplicado, así que la segunda pasada solo sube lo que quedó pendiente.
-- Si el parámetro ya existe y le faltan tags (creado antes de esta versión), se rellenan en este mismo flujo de edición, sin borrar ni recrear el parámetro.
-- Los cambios de tags se aplican con `add_tags_to_resource` / `remove_tags_from_resource` en la misma pasada que el valor. Vaciar el campo de una tag en el fichero equivale a borrarla en AWS.
-- Las tags de sistema (`aws:*`) no se exportan ni se tocan. Las tags que ya existan en AWS y no estén en la lista obligatoria se conservan y se pueden editar.
-- No hay forma de saltarse la validación por parámetro salvo relajarla explícitamente en tu configuración con `obligatorias_vacias = True`, o desactivar las tags por completo con `tags_activas = False`.
+> ⚠️ **Breaking change desde ParamsX 2.0**
 
-#### Configuración manual del PATH
-En algunos sistemas (especialmente en entornos corporativos como Windows), el PATH puede no configurarse automáticamente durante la instalación. Si ocurre esto, sigue los pasos según tu sistema operativo:
+Desde ParamsX 2.0, `parameter_list` ya no es una lista de strings.
 
-- En Windows
-1. Ve al Panel de control y busca: Editar las variables de usuario para <tu_usuario>.
-2. Añade una nueva entrada en las variables de usuario con el siguiente valor:
-```C:\Users\<tu_usuario>\AppData\Roaming\Python\Python<versión>\Scripts``` 
-(Reemplaza <tu_usuario> por tu nombre de usuario y <versión> por la versión de Python, como 312 para Python 3.12).
-3. Guarda los cambios y reinicia tu terminal.
+Antes:
 
-- En Linux/MacOS
-1. Abre tu terminal y edita el archivo de configuración de tu shell:
-    - Para bash: ~/.bashrc
-    - Para zsh: ~/.zshrc
-2. Añade la siguiente línea al final del archivo:
-```export PATH="$HOME/.local/bin:$PATH"```
-3. Guarda los cambios y recarga la configuración del shell ejecutando:
-```source ~/.bashrc   # Para bash```
-```source ~/.zshrc    # Para zsh```
+```python
+"parameter_list": [
+    "/rds",
+    "/api",
+]
+```
 
-Una vez instalado, verifica que el comando paramsx esté disponible ejecutando:
-```paramsx --version```
+Ahora cada ruta indica también el perfil que utiliza:
 
-Comandos disponibles:
+```python
+"parameter_list": [
+    {"path": "/rds", "perfil": "min"},
+    {"path": "/api", "perfil": "min"},
+]
+```
 
-| Comando | Qué hace |
+Si ParamsX detecta una configuración antigua, no intenta interpretarla de forma ambigua y muestra cómo actualizarla.
+
+## Nombres antiguos que se siguen aceptando
+
+Algunas opciones se han renombrado para que digan lo que hacen. **Los nombres antiguos siguen funcionando**, así que actualizar no obliga a tocar la configuración:
+
+| Nombre antiguo | Nombre actual |
 |---|---|
-| `paramsx` | Abre el menú interactivo (necesita configuración). |
-| `paramsx configure` | Crea la configuración la primera vez; si ya existe, la revisa sin tocarla. |
-| `paramsx configure --ejemplo` | Además deja la plantilla de esta versión al lado, para comparar. |
-| `paramsx --version` | Versión instalada. |
-| `paramsx --help` | Ayuda, con el resumen de todas las opciones de configuración. |
+| `abac` | `tags_activas` |
+| `naming` | `perfiles` |
+| `convencion` (en `parameter_list`) | `perfil` |
+| `convencion_nuevos` | `perfil_nuevos` |
 
+`paramsx configure` indica qué nombres antiguos utiliza tu configuración y cómo se llaman ahora.
 
-## Modo de empleo
-Ejecuta el comando principal desde la terminal:
+Consulta el `CHANGELOG.md` para conocer los cambios específicos de cada versión.
 
-```paramsx```
+---
 
-Navega por el menú interactivo:
+# Operaciones masivas
 
-El programa mostrará un menú donde Podrás:
-- Leer parámetros desde AWS SSM.
-- Cargar y actualizar parámetros.
-- Backup de parámetros.
-- Crear un parámetro nuevo.
+Antes de realizar una reorganización importante de Parameter Store es recomendable crear un backup completo.
 
-### Leer Parámetros:
-1. Selecciona la opción "Leer parámetros" en el menú. La lista muestra cada ruta con su perfil, por ejemplo `/rds  [min]` o `/API/STA  [max]`.
-2. Elige el prefijo y el entorno que deseas consultar.
-3. Los parámetros serán descargados y guardados en archivos como:
-    - parameters_dev.py
-    - parameters_dev_backup.py
-    ```Importante: Los archivos se generarán en la misma ruta desde donde ejecutes el comando paramsx```
-4. Edita el archivo parameters_{entorno}.py con tu software favorito. Con `tags_activas = True` cada parámetro trae además un campo por cada tag obligatoria para rellenar.
+Desde la opción de backups puedes generar:
 
-### Cargar Parámetros:
-1. Modifica los archivos generados (parameters_dev.py).
-2. Usa la opción "Cargar parámetros desde archivo" para comparar los cambios.
-3. El programa mostrará una lista con los siguientes estados:
-    - Nuevos: Parámetros que se agregarán.
-    - Modificados: Parámetros existentes que se actualizarán (valor, tags o ambos).
-    - Eliminados: Parámetros que se eliminarán automáticamente de AWS SSM.
-    * Revisa los cambios antes de confirmar.
-    ```Importante: Una vez confirmados los cambios, los archivos parameters_dev.py y parameters_dev_backup.py se eliminarán automáticamente```
-4. Si algún parámetro se queda sin subir por faltarle tags obligatorias, los ficheros se conservan para que lo corrijas y vuelvas a cargar.
+```text
+all_parameters_backup.py
+```
 
-### Crear un parámetro nuevo:
-1. Selecciona la opción "Crear nuevo parámetro" y elige el entorno.
-2. Escribe la ruta **sin el entorno**, como en tu `parameter_list`: ParamsX le aplica el perfil de `perfil_nuevos` y te enseña la ruta resultante en AWS para que la confirmes.
-3. Escribe el valor: texto plano o JSON en una línea.
-4. Rellena las tags obligatorias (si `tags_activas = True`). `Environment` viene precargada con el entorno elegido. Con `obligatorias_vacias = True` puedes dejar alguna en blanco pulsando Enter: esas no se crearán en AWS.
-5. Confirma en la pantalla de resumen. Si es un parámetro de RDS y falta su contraparte (común o privado), verás el aviso de correlación de naming ahí mismo.
+con todos los parámetros accesibles de la cuenta.
 
-### Backup Parámetros:
-1. Backup de un rango específico:
-Selecciona un prefijo y un entorno específico.
-Se creará un archivo único con el respaldo de los parámetros de esa selección.
-Ideal para respaldar y modificar parámetros de una aplicación o entorno en particular.
-2. Backup de todos los parámetros listados:
-Genera un respaldo combinado de todos los prefijos definidos en tu configuración (parameter_list) y sus entornos asociados.
-Se crea un archivo total_listed_parameters_backup.py que contiene los parámetros organizados.
-3. Backup de todos los parámetros de la cuenta de AWS:
-Lee todos los parámetros de AWS SSM desde la raíz (/).
-Se crea un archivo all_parameters_backup.py con el respaldo completo de la cuenta.
-Nota: Este proceso puede tardar dependiendo de la cantidad de parámetros almacenados.
+Ese fichero puede utilizarse como respaldo antes de realizar cambios masivos o migraciones.
 
+Revisa siempre cuidadosamente la comparación antes de confirmar eliminaciones o modificaciones.
 
-### Notas Adicionales
-- Seguridad:
-    Los parámetros se manejan como SecureString para garantizar que la información sensible esté cifrada. Los permisos los impone IAM: `parameter_list` solo decide qué rutas intenta leer la herramienta.
+---
 
-- Errores:
-    Los accesos denegados por IAM se muestran como un aviso legible. Cualquier otro error de AWS (ruta inexistente, throttling...) se propaga tal cual para que puedas diagnosticarlo.
+# Licencia
 
-- Modificar todos los parámetros actuales:
-ParamsX ha sido diseñado para trabajar fácilmente con entornos y listas de parámetros bien organizados. Sin embargo, si necesitas realizar ajustes masivos a tus parámetros, puedes aprovechar la funcionalidad de backup completo para modificar y reorganizar todos tus parámetros cómodamente.
+ParamsX se distribuye bajo licencia MIT.
 
-Pasos recomendados para modificar parámetros en masa:
-1. Crea un backup completo:
-    Usa la opción 3 del menú y selecciona "Todos los parámetros de AWS" para generar un archivo de respaldo con todos tus parámetros.
-    El archivo generado será:
-    - all_parameters_backup.py
-2. Duplica y renombra el archivo:
-    Cambia el nombre del archivo de backup para que quede acorde a tu entorno:
-    - parameters_dev.py
-    - parameters_dev_backup.py
-3. Modifica los parámetros:
-Edita el archivo parameters_dev.py según tus necesidades. Puedes añadir, modificar o eliminar parámetros según el entorno.
-4. Carga los nuevos parámetros:
-Selecciona la opción "Cargar parámetros desde archivo" y elige el entorno dev.
-5. Revisa los cambios:
-    El programa te mostrará una lista detallada de los cambios:
-    - Nuevos: Parámetros que se agregarán.
-    - Modificados: Parámetros existentes que serán actualizados.
-    - Eliminados: Parámetros que se eliminarán de AWS SSM.
-6. Confirma la carga:
-Una vez revisados los cambios, confirma para aplicar los ajustes en AWS SSM.
+Puedes utilizarlo, modificarlo y adaptarlo a tus necesidades.
 
-
-## Licencia
-ParamsX se distribuye bajo la licencia MIT, lo que significa que puedes usarlo libremente, modificarlo y adaptarlo a tus necesidades.
-```Nota: No hay responsabilidad alguna en posibles pérdidas de datos o configuraciones incorrectas. Por favor, asegúrate de revisar cuidadosamente los cambios antes de confirmarlos.```
+ParamsX modifica recursos reales de AWS. Revisa siempre los cambios mostrados en la pantalla de confirmación antes de aplicarlos.

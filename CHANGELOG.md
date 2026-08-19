@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.3.1
+
+Solo documentación: el programa es idéntico a la 2.3.0. Sale como versión porque la
+descripción que se ve en PyPI viaja dentro del paquete y no se puede editar sin publicar.
+
+### Corregido
+
+- **El comando de instalación del README era incorrecto**: decía `pip install paramx`, que no es un paquete que exista, así que quien seguía el README no podía instalar la herramienta. Ahora dice `pip install paramsx`.
+
+### Cambiado
+
+- **README reescrito.** Se elimina la duplicación que había entre el recorrido del menú del principio y el del final (mismo contenido dos veces), y queda una sección por tema: perfiles, `parameter_list`, fichero por ruta, descripciones, SecureString, tags, IAM, PATH y comandos. Un 43% menos de texto que la versión anterior.
+- Los ejemplos del README ahora son coherentes entre sí y con lo que hace la herramienta: los perfiles que se usan están todos definidos, cada ejemplo de ruta dice con qué perfil se resuelve, y los ficheros exportados se muestran con el formato exacto que escribe ParamsX.
+- Se documentan los **nombres antiguos de configuración que se siguen aceptando** (`abac`, `naming`, `convencion`, `convencion_nuevos`), que no aparecían en ningún sitio salvo el CHANGELOG.
+
 ## 2.3.0
 
 ### Añadido
