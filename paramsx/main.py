@@ -783,7 +783,7 @@ ParamsX __VERSION__ - Gestión de Parámetros de AWS SSM
 
 Comandos disponibles:
   paramsx                   Pregunta si quieres la versión web o la de terminal.
-  paramsx --web             Abre la versión web (necesita: pip install 'paramsx[web]').
+  paramsx --web             Abre la versión web en el navegador.
   paramsx --tui             Abre la versión de terminal (requiere configuración previa).
   paramsx configure         Crea ~/.xsoft/paramsx_config.py la primera vez. Si ya lo tienes,
                             NO lo toca: revisa qué opciones nuevas te faltan y si es válido.
@@ -832,7 +832,7 @@ Si necesitas más ayuda puedes leer el readme en GitHub o en Pypi:
 """
     print(help_text.replace("__VERSION__", version_actual()))
 
-MENSAJE_SIN_FLASK = "La versión web necesita Flask: pip install 'paramsx[web]'"
+MENSAJE_SIN_FLASK = "La versión web necesita Flask y no está instalado: reinstala paramsx o haz pip install flask"
 
 
 # Menú de arranque: web o terminal. Devuelve "web", "tui" o None (salir).
@@ -959,7 +959,7 @@ def _tarjetas(hay_web, defecto):
         "│ ▤▤▤▤  ▤▤▤▤▤▤  ▤▤▤    │",
         "│ ▤▤▤▤▤▤▤  ▤▤▤▤  ▤▤    │",
         "└──────────────────────┘",
-        "En el navegador" if hay_web else "pip install 'paramsx[web]'",
+        "En el navegador" if hay_web else "Falta Flask: pip install flask",
     ]
     tui = [
         "2 · TERMINAL",
@@ -996,7 +996,7 @@ def portada(hay_web, defecto):
     columnas = shutil.get_terminal_size((80, 24)).columns
     if columnas < 70:
         lineas = [f"ParamsX {__version__} · {FOOTER_TEXT}",
-                  "  1. Web       " + ("(en el navegador)" if hay_web else "(pip install 'paramsx[web]')"),
+                  "  1. Web       " + ("(en el navegador)" if hay_web else "(falta Flask: pip install flask)"),
                   "  2. Terminal  (el menú de siempre)"]
         return "\n".join(lineas)
 

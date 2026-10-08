@@ -1,5 +1,5 @@
 """Versión web de paramsx: un Flask local en 127.0.0.1 que se abre en el navegador.
-Necesita el extra [web]: pip install 'paramsx[web]'."""
+Flask viene con paramsx desde la 2.4.1."""
 
 
 def flask_disponible():

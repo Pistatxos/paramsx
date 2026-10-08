@@ -45,7 +45,6 @@ Al arrancar pregunta **1. Web** o **2. Terminal** (o directo: `paramsx --web` / 
 ## Versión web
 
 ```bash
-pip install 'paramsx[web]'   # añade Flask
 paramsx --web
 ```
 
@@ -950,7 +949,7 @@ paramsx --version
 | Comando | Descripción |
 |---|---|
 | `paramsx` | Pregunta: web o terminal. |
-| `paramsx --web` | Abre la versión web (necesita `paramsx[web]`). |
+| `paramsx --web` | Abre la versión web en el navegador. |
 | `paramsx --tui` | Abre el menú de terminal. |
 | `paramsx configure` | Crea o comprueba la configuración. |
 | `paramsx configure --ejemplo` | Genera la plantilla completa de configuración. |

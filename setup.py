@@ -92,10 +92,11 @@ setup(
     install_requires= [
         "boto3",
         "windows-curses; platform_system == 'Windows'",
+        "flask>=2.2",  # la versión web
     ],
-    # La versión web es opcional: pip install 'paramsx[web]'
+    # 'paramsx[web]' se mantiene para quien lo instaló así en la 2.4.0; ya no añade nada
     extras_require={
-        "web": ["flask>=2.2"],
+        "web": [],
     },
     entry_points={
         "console_scripts": [

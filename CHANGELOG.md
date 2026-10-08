@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.1
+
+### Cambiado
+
+- **La versión web viene incluida**: Flask pasa a ser una dependencia normal, así que basta con `pip install paramsx` (o `pipx install paramsx`) para tener las dos versiones. `paramsx[web]` se sigue aceptando, pero ya no añade nada.
+
 ## 2.4.0
 
 ### Añadido
