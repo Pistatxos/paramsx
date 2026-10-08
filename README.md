@@ -1,6 +1,6 @@
 # ParamsX
 
-ParamsX es una herramienta de terminal para **gestionar parámetros de AWS Systems Manager Parameter Store** de forma sencilla y controlada.
+ParamsX es una herramienta de terminal **y web** para **gestionar parámetros de AWS Systems Manager Parameter Store** de forma sencilla y controlada.
 
 Permite descargar parámetros a un fichero editable, comparar los cambios con AWS antes de aplicarlos, crear backups y añadir nuevos parámetros sin trabajar directamente desde la consola de AWS.
 
@@ -37,6 +37,36 @@ Y ejecuta la herramienta:
 ```bash
 paramsx
 ```
+
+Al arrancar pregunta **1. Web** o **2. Terminal** (o directo: `paramsx --web` / `paramsx --tui`).
+
+---
+
+## Versión web
+
+```bash
+pip install 'paramsx[web]'   # añade Flask
+paramsx --web
+```
+
+Abre el navegador en `http://127.0.0.1:8765/?token=…` (si el puerto está ocupado, el siguiente libre). Ctrl+C para cerrar. No necesita `paramsx configure`: la configuración se hace en **Ajustes** y se guarda en el mismo `~/.xsoft/paramsx_config.py` que lee la terminal.
+
+| Pantalla | Qué hace |
+|---|---|
+| **ParamsX** | Explora las rutas de la cuenta (solo nombres), carga un grupo × entorno o una ruta, y edita todos sus parámetros a la vez: valor, descripción, tipo y etiquetas. |
+| **Revisar** | Compara con AWS **en ese momento**: si alguien ha cambiado un parámetro desde que lo cargaste, sale como conflicto y no se toca. Para aplicar hay que escribir `APLICAR EN <cuenta>`. |
+| **Historial** | Las versiones de AWS (hasta 100); «Usar esta versión» la pone en el editor. |
+| **Ajustes** | Perfil de AWS y región, entornos, perfiles, grupos (`parameter_list`) y etiquetas obligatorias. «Buscar en la cuenta» añade una carpeta como grupo detectando dónde va el entorno. |
+
+![Editar un grupo](https://raw.githubusercontent.com/Pistatxos/paramsx/main/docs/img/web-editar.png)
+![Revisar con un conflicto](https://raw.githubusercontent.com/Pistatxos/paramsx/main/docs/img/web-revisar.png)
+
+Lo que conviene saber:
+
+- **Solo escucha en 127.0.0.1** y exige el token de la URL de arranque. Los valores **no se escriben nunca a disco**: viven en la página y desaparecen al cerrarla.
+- Lo que tu rol no puede leer o descifrar (KMS) sale con 🔒 en solo lectura, y el resto se edita con normalidad.
+- Al guardar se conserva la clave KMS propia, la descripción, el tier Advanced y el `DataType`. Los cambios solo de etiquetas no crean versión nueva.
+- La web lee tu configuración **como datos**, sin ejecutarla: si usa variables o `import`, edítala a mano. Al guardar se conservan tus comentarios y el fichero anterior queda como `paramsx_config.py.bak`.
 
 Para comprobar la versión instalada:
 
@@ -919,7 +949,9 @@ paramsx --version
 
 | Comando | Descripción |
 |---|---|
-| `paramsx` | Abre el menú interactivo. |
+| `paramsx` | Pregunta: web o terminal. |
+| `paramsx --web` | Abre la versión web (necesita `paramsx[web]`). |
+| `paramsx --tui` | Abre el menú de terminal. |
 | `paramsx configure` | Crea o comprueba la configuración. |
 | `paramsx configure --ejemplo` | Genera la plantilla completa de configuración. |
 | `paramsx --version` | Muestra la versión instalada. |

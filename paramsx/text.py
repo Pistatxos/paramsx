@@ -9,4 +9,9 @@ HEADER_ASCII = r"""
 
 """
 
-FOOTER_TEXT = "By Mariox"
+FOOTER_TEXT = "@pistatxos"
+
+# Paleta compartida por la portada de arranque y el menú de terminal (colores de 256)
+DEGRADADO_256 = (39, 45, 81, 87, 123, 159)  # el logo, de azul a cian
+ACENTO_256 = 75                             # lo elegido y la firma
+TENUE_256 = 244                             # separadores y ayudas

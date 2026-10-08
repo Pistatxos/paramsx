@@ -9,7 +9,7 @@ from botocore.exceptions import ClientError
 from . import paramsx_config as plantilla_config
 from . import __version__
 from .funcions import (
-    draw_header, draw_footer, show_main_menu, show_comparison_results,
+    draw_header, draw_footer, show_main_menu, iniciar_estilo, show_comparison_results,
     show_environment_selection, show_message, show_parameter_selection,
     get_parameters_by_prefix, delete_parameter, export_parameters_to_file,
     compare_parameters, load_parameters, show_main_menu_selection,
@@ -18,51 +18,13 @@ from .funcions import (
     agregar_descripciones_a_parametros,
     show_report, prompt_input, indexar_parametros, indice_a_parametros,
     ficheros_cargables,
-    POSICIONES_ENTORNO, CASES_ENTORNO, CASES_RUTA, MARCADOR_ENTORNO, slug_entrada,
-    aplicar_case_ruta,
+    MARCADOR_ENTORNO, slug_entrada, aplicar_case_ruta,
 )
-
-
-# Ruta de la configuración personalizada
-CONFIG_PATH = os.path.expanduser("~/.xsoft/paramsx_config.py")
-
-# Ruta de la plantilla que se copia con 'paramsx configure'
-PLANTILLA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paramsx_config.py")
-
-MENSAJE_MIGRACION = """BREAKING CHANGE en la configuración de ParamsX
-------------------------------------------------
-'parameter_list' ya no es una lista de strings: ahora cada entrada es un diccionario
-que declara qué perfil usa. Edita a mano ~/.xsoft/paramsx_config.py:
-
-    "entornos": ['dev', 'pre', 'prod'],   # SIEMPRE en minúscula
-    "parameter_list": [
-        {"path": "/common",   "perfil": "min"},   # /common   + dev -> /dev/common
-        {"path": "/rds",      "perfil": "min"},   # /rds      + dev -> /dev/rds
-        {"path": "/EMAIL",    "perfil": "max"},   # /EMAIL    + dev -> /EMAIL/DEV
-        {"path": "/API/STA",  "perfil": "max"},   # /API/STA  + dev -> /API/STA/DEV
-    ]
-
-Los perfiles se definen en el diccionario 'perfiles' del mismo fichero, con la posición
-y el case del entorno. 'min' y 'max' vienen predefinidos en la plantilla.
-
-Ya no existe 'entornos_old': el entorno se escribe a partir de la lista 'entornos',
-que va siempre en minúscula, aplicándole el 'case_entorno' del perfil."""
-
-
-# Opciones que viven fuera de 'configuraciones' y son opcionales: si el usuario no las
-# tiene, se usa el valor de la plantilla. Se listan para poder decirle qué le falta.
-CLAVES_OPCIONALES = (
-    "perfiles", "perfil_nuevos", "fichero_por_ruta", "forzar_securestring",
-    "tags_activas", "obligatorias_vacias", "tags_obligatorias",
+from .core.config import (
+    CONFIG_PATH, PLANTILLA_PATH, CLAVES_OPCIONALES, NOMBRES_ANTIGUOS,
+    config_desde_valores, validate_config, normalize_config,
 )
-
-# Nombres antiguos que se siguen aceptando -> nombre actual. Se traducen al cargar, así
-# que dentro del código solo existe el nombre nuevo.
-NOMBRES_ANTIGUOS = {
-    "naming": "perfiles",              # 2.2.0
-    "convencion_nuevos": "perfil_nuevos",  # 2.2.0
-    "abac": "tags_activas",            # 2.0.0 y 2.1.0
-}
+from .core.rutas import validar_marcador
 
 
 # Ejecutar el fichero de configuración del usuario y devolver el módulo resultante
@@ -75,212 +37,10 @@ def cargar_modulo_config():
     return modulo
 
 
-# Cargar configuraciones desde el archivo de usuario
+# Cargar configuraciones desde el archivo de usuario. La terminal lo ejecuta como
+# siempre; los valores por defecto los rellena core, igual que en la web.
 def load_config():
-    modulo = cargar_modulo_config()
-
-    config = dict(modulo.configuraciones)
-    # Todo lo que va fuera de 'configuraciones' es opcional en el fichero del usuario:
-    # si no está, se usa el valor de la plantilla que trae el paquete.
-    # 'naming' es el nombre que tuvo 'perfiles' en la 2.2.0
-    config["perfiles"] = dict(
-        getattr(modulo, "perfiles", getattr(modulo, "naming", plantilla_config.perfiles))
-    )
-    # 'abac' es el nombre antiguo (2.0/2.1) de 'tags_activas': se sigue aceptando.
-    config["tags_activas"] = bool(
-        getattr(modulo, "tags_activas", getattr(modulo, "abac", plantilla_config.tags_activas))
-    )
-    config["obligatorias_vacias"] = bool(
-        getattr(modulo, "obligatorias_vacias", plantilla_config.obligatorias_vacias)
-    )
-    config["tags_obligatorias"] = list(
-        getattr(modulo, "tags_obligatorias", plantilla_config.tags_obligatorias)
-    )
-    config["fichero_por_ruta"] = bool(
-        getattr(modulo, "fichero_por_ruta", plantilla_config.fichero_por_ruta)
-    )
-    config["forzar_securestring"] = bool(
-        getattr(modulo, "forzar_securestring", plantilla_config.forzar_securestring)
-    )
-    # Si no se declara, los parámetros nuevos usan el primer perfil definido
-    # ('convencion_nuevos' es el nombre que tuvo en la 2.2.0)
-    primer_perfil = next(iter(config["perfiles"]), None)
-    config["perfil_nuevos"] = (
-        getattr(modulo, "perfil_nuevos", None)
-        or getattr(modulo, "convencion_nuevos", None)
-        or primer_perfil
-    )
-    return config
-
-
-# Validar la configuración del usuario. Devuelve (errores, avisos).
-def validate_config(config):
-    errores = []
-    avisos = []
-
-    for clave in ("profile_name", "region_name", "entornos", "parameter_list"):
-        if clave not in config:
-            errores.append(f"Falta la clave '{clave}' en configuraciones.")
-
-    entornos = config.get("entornos")
-    if isinstance(entornos, (list, tuple)) and entornos:
-        if any(str(e) != str(e).lower() for e in entornos):
-            avisos.append(
-                "Aviso: 'entornos' debe escribirse en minúscula ('dev', 'pre', 'prod'). "
-                "Se normalizará automáticamente, pero actualiza tu configuración."
-            )
-    elif "entornos" in config:
-        errores.append("'entornos' debe ser una lista no vacía de entornos en minúscula.")
-
-    perfiles = config.get("perfiles")
-    if not isinstance(perfiles, dict) or not perfiles:
-        errores.append(
-            "'perfiles' debe ser un diccionario con al menos un perfil "
-            "(ver la plantilla en el propio fichero de configuración)."
-        )
-        perfiles = {}
-    else:
-        errores.extend(validar_perfiles(perfiles))
-
-    perfil_nuevos = config.get("perfil_nuevos")
-    if perfiles and perfil_nuevos not in perfiles:
-        errores.append(
-            f"'perfil_nuevos' apunta a un perfil que no existe: {perfil_nuevos!r}. "
-            f"Perfiles definidos en 'perfiles': {', '.join(sorted(perfiles))}."
-        )
-
-    parameter_list = config.get("parameter_list")
-    if not isinstance(parameter_list, (list, tuple)) or not parameter_list:
-        if "parameter_list" in config:
-            errores.append("'parameter_list' debe ser una lista no vacía.")
-        return errores, avisos
-
-    if any(isinstance(entrada, str) for entrada in parameter_list):
-        errores.append(MENSAJE_MIGRACION)
-        return errores, avisos
-
-    for entrada in parameter_list:
-        if not isinstance(entrada, dict):
-            errores.append(f"Entrada inválida en parameter_list: {entrada!r}")
-            continue
-        path = entrada.get("path")
-        nombre_perfil = perfil_de(entrada)
-        if not isinstance(path, str) or not path.strip("/"):
-            errores.append(f"'path' inválido o vacío en parameter_list: {entrada!r}")
-            continue
-        if not path.startswith("/"):
-            errores.append(f"El 'path' debe empezar por '/': {path!r}")
-        if nombre_perfil not in perfiles:
-            errores.append(
-                f"'perfil' inválido en {path!r}: {nombre_perfil!r}. "
-                f"Perfiles definidos en 'perfiles': {', '.join(sorted(perfiles)) or '(ninguno)'}."
-            )
-            continue
-        errores.extend(validar_marcador(path, nombre_perfil, perfiles[nombre_perfil]))
-
-    # Dos entradas que resuelvan a la misma ruta no rompen nada, pero duplican trabajo
-    # y confunden en el menú, así que se avisa.
-    vistas = {}
-    entornos_muestra = config.get("entornos") or ["dev"]
-    for entrada in parameter_list:
-        perfil = perfiles.get(perfil_de(entrada)) if isinstance(entrada, dict) else None
-        if not isinstance(perfil, dict):
-            continue
-        try:
-            resuelta = build_full_path(entrada["path"], perfil, str(entornos_muestra[0]).lower())
-        except ValueError:
-            continue
-        anterior = vistas.get(resuelta)
-        if anterior and anterior != entrada["path"]:
-            avisos.append(
-                f"Aviso: '{anterior}' y '{entrada['path']}' resuelven a la misma ruta "
-                f"({resuelta}). Aparecerán dos veces en el menú."
-            )
-        vistas.setdefault(resuelta, entrada["path"])
-
-    return errores, avisos
-
-
-# Nombre del perfil que usa una entrada. 'convencion' es el nombre que tuvo esta clave
-# en la 2.0, la 2.1 y la 2.2.0, y se sigue aceptando.
-def perfil_de(entrada):
-    if not isinstance(entrada, dict):
-        return None
-    return entrada.get("perfil", entrada.get("convencion"))
-
-
-# Validar los perfiles. Devuelve la lista de errores.
-def validar_perfiles(perfiles):
-    errores = []
-    for nombre, perfil in perfiles.items():
-        if not isinstance(perfil, dict):
-            errores.append(f"El perfil {nombre!r} debe ser un diccionario.")
-            continue
-
-        posicion = perfil.get("posicion_entorno")
-        if posicion not in POSICIONES_ENTORNO:
-            errores.append(
-                f"'posicion_entorno' inválida en el perfil {nombre!r}: {posicion!r}. "
-                f"Usa una de: {', '.join(POSICIONES_ENTORNO)}."
-            )
-
-        case_entorno = perfil.get("case_entorno", "lower")
-        if case_entorno not in CASES_ENTORNO:
-            errores.append(
-                f"'case_entorno' inválido en el perfil {nombre!r}: {case_entorno!r}. "
-                f"Usa uno de: {', '.join(CASES_ENTORNO)}."
-            )
-
-        case_ruta = perfil.get("case_ruta", "ninguno")
-        if case_ruta not in CASES_RUTA:
-            errores.append(
-                f"'case_ruta' inválido en el perfil {nombre!r}: {case_ruta!r}. "
-                f"Usa uno de: {', '.join(CASES_RUTA)}."
-            )
-
-    return errores
-
-
-# El marcador '*' y la posición del perfil tienen que contar la misma historia: si no,
-# la ruta se construye mal y SSM devuelve cero parámetros sin decir por qué.
-def validar_marcador(path, nombre_perfil, perfil):
-    segmentos = [s for s in path.strip("/").split("/") if s]
-    marcadores = segmentos.count(MARCADOR_ENTORNO)
-    posicion = perfil.get("posicion_entorno")
-
-    if any(MARCADOR_ENTORNO in s and s != MARCADOR_ENTORNO for s in segmentos):
-        return [
-            f"En {path!r} el '{MARCADOR_ENTORNO}' debe ser un segmento entero "
-            f"(/API/{MARCADOR_ENTORNO}/STA), no parte de un segmento."
-        ]
-
-    if posicion == "mixto" and marcadores != 1:
-        return [
-            f"La ruta {path!r} usa el perfil {nombre_perfil!r} ('mixto') y debe llevar "
-            f"exactamente un '{MARCADOR_ENTORNO}' que marque dónde va el entorno "
-            f"(tiene {marcadores})."
-        ]
-
-    if posicion != "mixto" and marcadores:
-        return [
-            f"La ruta {path!r} lleva un '{MARCADOR_ENTORNO}' pero su perfil {nombre_perfil!r} "
-            f"tiene posicion_entorno='{posicion}', que ya decide dónde va el entorno. "
-            "Usa un perfil 'mixto' o quita el marcador."
-        ]
-
-    return []
-
-
-# Normalizar la configuración ya validada
-def normalize_config(config):
-    config["entornos"] = [str(e).lower() for e in config["entornos"]]
-    # Se normaliza la clave del perfil: aunque el usuario haya escrito 'convencion',
-    # dentro del programa las entradas solo tienen 'perfil'.
-    config["parameter_list"] = [
-        {"path": "/" + entrada["path"].strip("/"), "perfil": perfil_de(entrada)}
-        for entrada in config["parameter_list"]
-    ]
-    return config
+    return config_desde_valores(vars(cargar_modulo_config()))
 
 
 # Nombres del fichero exportado y de su backup. Los usan por igual la lectura (opción 1)
@@ -526,10 +286,8 @@ def main(stdscr, config=None):
     boto3.setup_default_session(profile_name=config["profile_name"])
     ssm = boto3.client("ssm", region_name=config["region_name"])
 
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)
-    curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_GREEN, curses.COLOR_BLACK)
+    # Colores: los de siempre (1 a 3) y los de la portada (logo, selección y firma)
+    iniciar_estilo()
 
     environments = config['entornos']
     PARAMETER_LIST = config['parameter_list']
@@ -1024,7 +782,9 @@ def show_help():
 ParamsX __VERSION__ - Gestión de Parámetros de AWS SSM
 
 Comandos disponibles:
-  paramsx                   Ejecuta el programa principal (requiere configuración previa).
+  paramsx                   Pregunta si quieres la versión web o la de terminal.
+  paramsx --web             Abre la versión web (necesita: pip install 'paramsx[web]').
+  paramsx --tui             Abre la versión de terminal (requiere configuración previa).
   paramsx configure         Crea ~/.xsoft/paramsx_config.py la primera vez. Si ya lo tienes,
                             NO lo toca: revisa qué opciones nuevas te faltan y si es válido.
   paramsx configure --ejemplo   Además deja la plantilla de esta versión al lado, como
@@ -1072,6 +832,194 @@ Si necesitas más ayuda puedes leer el readme en GitHub o en Pypi:
 """
     print(help_text.replace("__VERSION__", version_actual()))
 
+MENSAJE_SIN_FLASK = "La versión web necesita Flask: pip install 'paramsx[web]'"
+
+
+# Menú de arranque: web o terminal. Devuelve "web", "tui" o None (salir).
+# En una terminal se elige con ← →, Intro o el número; sin terminal (tubería), con input().
+def elegir_modo():
+    from .web import flask_disponible
+    hay_web = flask_disponible()
+    elegida = "1" if hay_web else "2"
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return _elegir_modo_texto(hay_web, elegida)
+
+    aviso = ""
+    try:
+        while True:
+            _limpiar()
+            print(portada(hay_web, elegida))
+            print("  " + _color("← → para elegir · Intro para abrir · q para salir", "tenue"))
+            if aviso:
+                print("  " + _color(aviso, "acento"))
+            tecla = _leer_tecla()
+            aviso = ""
+            if tecla in ("izquierda", "arriba"):
+                elegida = "1"
+            elif tecla in ("derecha", "abajo"):
+                elegida = "2"
+            elif tecla in ("1", "2"):
+                elegida = tecla
+                tecla = "intro"
+            elif tecla in ("q", "Q", "esc"):
+                _limpiar()
+                return None
+            if tecla == "intro":
+                if elegida == "1" and not hay_web:
+                    aviso = MENSAJE_SIN_FLASK + ". Mientras, puedes usar la terminal."
+                    continue
+                _limpiar()
+                return "web" if elegida == "1" else "tui"
+    except KeyboardInterrupt:
+        _limpiar()
+        return None
+
+
+def _elegir_modo_texto(hay_web, defecto):
+    print(portada(hay_web, defecto))
+    while True:
+        try:
+            opcion = input(f"  › Elige 1 o 2 [Intro = {defecto}]: ").strip() or defecto
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if opcion == "1" and hay_web:
+            return "web"
+        if opcion == "1":
+            print("  " + MENSAJE_SIN_FLASK + ". Mientras, puedes usar la terminal (2).")
+            continue
+        if opcion == "2":
+            return "tui"
+        if opcion.lower() in ("q", "salir"):
+            return None
+
+
+def _limpiar():
+    print("\033[H\033[2J\033[3J", end="", flush=True)
+
+
+# Una pulsación sin esperar a Intro: "izquierda", "derecha", "arriba", "abajo", "intro",
+# "esc" o el carácter tal cual. Ctrl+C sigue lanzando KeyboardInterrupt.
+def _leer_tecla():
+    if os.name == "nt":
+        import msvcrt
+        c = msvcrt.getwch()
+        if c in ("\x00", "\xe0"):
+            return {"K": "izquierda", "M": "derecha", "H": "arriba", "P": "abajo"}.get(msvcrt.getwch(), "")
+        if c == "\x03":
+            raise KeyboardInterrupt
+        return {"\r": "intro", "\x1b": "esc"}.get(c, c)
+
+    import select
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    antes = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        c = os.read(fd, 1).decode(errors="ignore")
+        if c == "\x1b":
+            # Una flecha llega como ESC [ C; un Esc suelto no trae nada detrás
+            if not select.select([fd], [], [], 0.05)[0]:
+                return "esc"
+            resto = os.read(fd, 2).decode(errors="ignore")
+            return {"[D": "izquierda", "[C": "derecha", "[A": "arriba", "[B": "abajo",
+                    "OD": "izquierda", "OC": "derecha", "OA": "arriba", "OB": "abajo"}.get(resto, "")
+        return {"\n": "intro", "\r": "intro"}.get(c, c)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, antes)
+
+
+# Colores ANSI solo si la salida es una terminal y no se ha pedido NO_COLOR
+from .text import DEGRADADO_256, ACENTO_256, TENUE_256, FOOTER_TEXT  # noqa: E402
+_COLORES = {"acento": f"38;5;{ACENTO_256}", "tenue": f"38;5;{TENUE_256}", "negrita": "1"}
+_DEGRADADO = tuple(f"38;5;{c}" for c in DEGRADADO_256)
+
+
+def _hay_color():
+    return sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+
+
+def _color(texto, estilo):
+    if not _hay_color():
+        return texto
+    return f"\033[{_COLORES.get(estilo, estilo)}m{texto}\033[0m"
+
+
+# Las dos tarjetas, lado a lado. La elegida va en color; la web, apagada si
+# no está Flask. Se componen en texto plano y luego se colorean línea a línea, para que
+# los códigos ANSI no descuadren el ancho.
+def _tarjetas(hay_web, defecto):
+    ancho = 30
+    web = [
+        "1 · WEB",
+        "",
+        "┌──────────────────────┐",
+        "│ ● ● ●   127.0.0.1    │",
+        "│ ▤▤▤▤  ▤▤▤▤▤▤  ▤▤▤    │",
+        "│ ▤▤▤▤▤▤▤  ▤▤▤▤  ▤▤    │",
+        "└──────────────────────┘",
+        "En el navegador" if hay_web else "pip install 'paramsx[web]'",
+    ]
+    tui = [
+        "2 · TERMINAL",
+        "",
+        "┌──────────────────────┐",
+        "│ $ paramsx            │",
+        "│ > 1. Leer parámetros │",
+        "│   2. Cargar          │",
+        "└──────────────────────┘",
+        "El menú de siempre",
+    ]
+
+    def caja(lineas, opcion):
+        estilo = "acento" if opcion == defecto else "tenue"
+        if opcion == "1" and not hay_web:
+            estilo = "tenue"
+        borde = (lambda t: _color(t, estilo))
+        filas = [borde("╭" + "─" * ancho + "╮")]
+        for i, linea in enumerate(lineas):
+            texto = f"  {linea}".ljust(ancho)
+            if i == 0:
+                texto = _color(texto, "negrita") if estilo == "acento" else texto
+            elif i == len(lineas) - 1:
+                texto = _color(texto, "tenue")
+            filas.append(borde("│") + texto + borde("│"))
+        filas.append(borde("╰" + "─" * ancho + "╯"))
+        return filas
+
+    return [f"  {a}  {b}" for a, b in zip(caja(web, "1"), caja(tui, "2"))]
+
+
+def portada(hay_web, defecto):
+    from .text import HEADER_ASCII
+    columnas = shutil.get_terminal_size((80, 24)).columns
+    if columnas < 70:
+        lineas = [f"ParamsX {__version__} · {FOOTER_TEXT}",
+                  "  1. Web       " + ("(en el navegador)" if hay_web else "(pip install 'paramsx[web]')"),
+                  "  2. Terminal  (el menú de siempre)"]
+        return "\n".join(lineas)
+
+    logo = [l for l in HEADER_ASCII.split("\n") if l.strip()]
+    lineas = [""]
+    for i, linea in enumerate(logo):
+        lineas.append("  " + _color(linea, _DEGRADADO[i % len(_DEGRADADO)]))
+    lineas.append("  " + _color(f"SSM Parameter Store · v{__version__} · ", "tenue") + _color(FOOTER_TEXT, "acento"))
+    lineas.append("")
+    lineas.extend(_tarjetas(hay_web, defecto))
+    lineas.append("")
+    return "\n".join(lineas)
+
+
+def arrancar_web():
+    from .web import flask_disponible
+    if not flask_disponible():
+        print(MENSAJE_SIN_FLASK)
+        return
+    from .web.app import arrancar
+    arrancar(abrir_navegador="--sin-navegador" not in sys.argv[1:])
+
+
 # Entry point
 def entry_point():
     if len(sys.argv) > 1:
@@ -1085,6 +1033,20 @@ def entry_point():
         elif command in ["--version", "-v", "version"]:
             print(f"paramsx {version_actual()}")
             return
+
+    argumentos = sys.argv[1:]
+    if "--web" in argumentos:
+        modo = "web"
+    elif "--tui" in argumentos:
+        modo = "tui"
+    else:
+        modo = elegir_modo()
+    if modo is None:
+        return
+    if modo == "web":
+        # La web no necesita la configuración previa: se hace desde Ajustes
+        arrancar_web()
+        return
 
     # Verificar que exista el archivo de configuración
     if not os.path.exists(CONFIG_PATH):

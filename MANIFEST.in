@@ -1,3 +1,4 @@
 include paramsx/paramsx_config.py
-include paramsx/post_install.py
 include CHANGELOG.md
+recursive-include paramsx/web/templates *.html
+recursive-include paramsx/web/static *

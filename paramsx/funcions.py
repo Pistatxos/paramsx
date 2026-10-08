@@ -1,9 +1,14 @@
 import time
 import os
 import textwrap
-from .text import HEADER_ASCII, FOOTER_TEXT
+from .text import HEADER_ASCII, FOOTER_TEXT, DEGRADADO_256, ACENTO_256, TENUE_256
 import curses
 from botocore.exceptions import ClientError
+# La lógica de perfiles y rutas vive en core (la comparte la web); se reexporta aquí
+from .core.rutas import (  # noqa: F401
+    POSICIONES_ENTORNO, CASES_ENTORNO, CASES_RUTA, MARCADOR_ENTORNO,
+    aplicar_case_entorno, aplicar_case_ruta, build_full_path,
+)
 
 # Prefijo con el que se serializan las tags en el fichero exportado: tagApplication, tagOwner...
 TAG_FIELD_PREFIX = "tag"
@@ -28,71 +33,6 @@ class AccessDeniedError(Exception):
 
 def _codigo_error(error):
     return error.response.get("Error", {}).get("Code", "")
-
-
-# Valores admitidos en un perfil
-POSICIONES_ENTORNO = ("inicio", "final", "mixto", "ninguno")
-CASES_ENTORNO = ("lower", "upper", "capitalize")
-CASES_RUTA = ("lower", "upper", "capitalize", "ninguno")
-
-# Marcador que indica, en las rutas de perfiles "mixto", dónde va el entorno
-MARCADOR_ENTORNO = "*"
-
-
-# Escribir el entorno como lo pide el perfil: dev -> dev | DEV | Dev
-def aplicar_case_entorno(entorno, case_entorno):
-    if case_entorno == "upper":
-        return entorno.upper()
-    if case_entorno == "capitalize":
-        return entorno.capitalize()
-    return entorno.lower()
-
-
-# Escribir la ruta como pide el perfil al crear un parámetro nuevo. 'capitalize' va
-# segmento a segmento: str.capitalize() sobre la ruta entera pasaría a minúscula todo
-# lo que hay detrás del primer carácter.
-def aplicar_case_ruta(path, case_ruta):
-    if case_ruta == "lower":
-        return path.lower()
-    if case_ruta == "upper":
-        return path.upper()
-    if case_ruta == "capitalize":
-        return "/" + "/".join(s.capitalize() for s in path.strip("/").split("/") if s)
-    return path
-
-
-# Construir la ruta completa aplicando el perfil de la entrada.
-# Las tres posiciones son la misma operación: se normaliza la ruta a una plantilla con
-# un único marcador y se sustituye por el entorno. "ninguno" no lleva marcador.
-def build_full_path(path, perfil, entorno):
-    segmentos = [s for s in path.strip("/").split("/") if s]
-    if not segmentos:
-        raise ValueError(f"Ruta vacía en parameter_list: {path!r}")
-
-    posicion = perfil.get("posicion_entorno")
-    if posicion not in POSICIONES_ENTORNO:
-        raise ValueError(
-            f"'posicion_entorno' desconocida {posicion!r} para la ruta {path!r}. "
-            f"Usa una de: {', '.join(POSICIONES_ENTORNO)}."
-        )
-
-    if posicion == "ninguno":
-        return "/" + "/".join(segmentos)
-
-    if posicion == "inicio":
-        plantilla = [MARCADOR_ENTORNO, *segmentos]
-    elif posicion == "final":
-        plantilla = [*segmentos, MARCADOR_ENTORNO]
-    else:  # mixto: el marcador ya viene puesto en la ruta
-        if segmentos.count(MARCADOR_ENTORNO) != 1:
-            raise ValueError(
-                f"La ruta {path!r} usa un perfil 'mixto' y debe llevar exactamente un "
-                f"'{MARCADOR_ENTORNO}' como segmento para marcar dónde va el entorno."
-            )
-        plantilla = segmentos
-
-    entorno_escrito = aplicar_case_entorno(entorno, perfil.get("case_entorno", "lower"))
-    return "/" + "/".join(entorno_escrito if s == MARCADOR_ENTORNO else s for s in plantilla)
 
 
 # Trozo de nombre de fichero derivado de una entrada de parameter_list:
@@ -619,36 +559,83 @@ def show_comparison_results(stdscr, changes):
             return True
 
 
+# Estilo de la terminal, el mismo que la portada de arranque. Con menos de 256 colores se
+# queda en lo básico (cian y vídeo inverso).
+ESTILO = {"degradado": [], "seleccion": curses.A_REVERSE, "tenue": 0, "firma": curses.A_BOLD}
+
+
+def iniciar_estilo():
+    curses.start_color()
+    try:
+        curses.use_default_colors()
+        fondo = -1  # el fondo de la terminal de cada uno, no un negro impuesto
+    except curses.error:
+        fondo = curses.COLOR_BLACK
+    curses.init_pair(1, curses.COLOR_WHITE, curses.COLOR_BLUE)
+    curses.init_pair(2, curses.COLOR_RED, fondo)
+    curses.init_pair(3, curses.COLOR_GREEN, fondo)
+    try:
+        if curses.COLORS >= 256:
+            for i, color in enumerate(DEGRADADO_256):
+                curses.init_pair(10 + i, color, fondo)
+            curses.init_pair(16, 235, ACENTO_256)   # barra de selección
+            curses.init_pair(17, TENUE_256, fondo)
+            curses.init_pair(18, ACENTO_256, fondo)
+            ESTILO["degradado"] = [curses.color_pair(10 + i) for i in range(len(DEGRADADO_256))]
+            ESTILO["seleccion"] = curses.color_pair(16) | curses.A_BOLD
+            ESTILO["tenue"] = curses.color_pair(17)
+            ESTILO["firma"] = curses.color_pair(18) | curses.A_BOLD
+        elif curses.has_colors():
+            curses.init_pair(10, curses.COLOR_CYAN, fondo)
+            ESTILO["degradado"] = [curses.color_pair(10)]
+            ESTILO["firma"] = curses.color_pair(10) | curses.A_BOLD
+    except curses.error:
+        pass
+
+
+# Una opción de lista: la elegida es una barra con '›'; las demás, alineadas con ella
+def pintar_opcion(stdscr, fila, texto, elegida, ancho_barra, max_x):
+    linea = (f" › {texto}" if elegida else f"   {texto}").ljust(ancho_barra)[:max_x - 1]
+    try:
+        stdscr.addstr(fila, 0, linea, ESTILO["seleccion"] if elegida else 0)
+    except curses.error:
+        pass
+
+
 # Función para mostrar el header personalizado
 def draw_header(stdscr):
     max_y, max_x = stdscr.getmaxyx()
     separator = "=" * max_x
-    stdscr.addstr(0, 0, separator)  # Línea superior del header
+    stdscr.addstr(0, 0, separator[:max_x - 1], ESTILO["tenue"])  # Línea superior del header
 
-    # Mostrar HEADER_ASCII línea por línea sin strip
+    # Mostrar HEADER_ASCII línea por línea sin strip, con el degradado de la portada
     header_lines = HEADER_ASCII.split("\n")  # No eliminar espacios ni líneas vacías
     last_line_index = 0  # Guardar el índice de la última línea válida
+    visibles = 0
 
     for i, line in enumerate(header_lines, start=1):
         if line.strip():  # Solo imprimir líneas no vacías
-            stdscr.addstr(i, 0, line)
+            colores = ESTILO["degradado"]
+            stdscr.addstr(i, 0, line[:max_x - 1], colores[visibles % len(colores)] if colores else 0)
+            visibles += 1
             last_line_index = i  # Actualizar la posición de la última línea visible
 
-    stdscr.addstr(last_line_index + 1, 0, separator)  # Línea inferior después de la última línea del header
+    # Línea inferior después de la última línea del header
+    stdscr.addstr(last_line_index + 1, 0, separator[:max_x - 1], ESTILO["tenue"])
 
 # Función para mostrar el footer personalizado
 def draw_footer(stdscr):
     rows, cols = stdscr.getmaxyx()  # Tamaño del terminal
     exit_text = "Pulsa 'Esc' para volver o salir"  # Mensaje adicional
     footer_text = FOOTER_TEXT[:cols - 1]  # Recortar el texto si es más ancho que el terminal
-    separator = "-" * cols  # Separador completo ajustado al ancho
+    separator = "-" * (cols - 1)  # Separador ajustado al ancho
 
     # Asegurarse de que hay espacio suficiente para el footer
     if rows > 2:  # Verifica que haya espacio mínimo para el footer
         try:
-            stdscr.addstr(rows - 3, 0, exit_text.center(cols, " "))  # Centrar el texto de salida
-            stdscr.addstr(rows - 2, 0, separator)  # Línea separadora
-            stdscr.addstr(rows - 1, 0, footer_text.center(cols - 1, " "))  # Centrar el texto
+            stdscr.addstr(rows - 3, 0, exit_text.center(cols - 1, " ")[:cols - 1], ESTILO["tenue"])
+            stdscr.addstr(rows - 2, 0, separator, ESTILO["tenue"])
+            stdscr.addstr(rows - 1, max(0, (cols - 1 - len(footer_text)) // 2), footer_text, ESTILO["firma"])
         except curses.error:
             pass  # Ignorar errores si no hay espacio suficiente
 
@@ -677,12 +664,10 @@ def show_main_menu_selection(stdscr):
         draw_header(stdscr)
         start_line = HEADER_ASCII.count("\n") + 1
 
+        max_x = stdscr.getmaxyx()[1]
+        ancho = max(len(o) for o in options) + 8
         for idx, option in enumerate(options, start=1):
-            line = f"{idx}. {option}"
-            if idx - 1 == selected:
-                stdscr.addstr(start_line + idx - 1, 0, line, curses.A_REVERSE)
-            else:
-                stdscr.addstr(start_line + idx - 1, 0, line)
+            pintar_opcion(stdscr, start_line + idx - 1, f"{idx}. {option}", idx - 1 == selected, ancho, max_x)
 
         # Mostrar instrucciones y buffer de entrada
         input_line = start_line + len(options) + 1
@@ -755,11 +740,9 @@ def show_parameter_selection(stdscr, options, titulo="Seleccione un parámetro p
             if actual_idx < len(options):
                 # Truncar al ancho del terminal: los nombres de fichero y las rutas
                 # largas desmaquetarían la lista al hacer wrap
-                line = f"{actual_idx + 1}. {options[actual_idx]}"[:max_x - 1]
-                if actual_idx == selected:
-                    stdscr.addstr(start_line + i + 1, 0, line, curses.A_REVERSE)
-                else:
-                    stdscr.addstr(start_line + i + 1, 0, line)
+                ancho = max(len(o) for o in options) + 10
+                pintar_opcion(stdscr, start_line + i + 1, f"{actual_idx + 1}. {options[actual_idx]}",
+                              actual_idx == selected, ancho, max_x)
 
         # Mostrar info de scroll si es necesario
         if len(options) > visible_count:
@@ -826,12 +809,10 @@ def show_environment_selection(stdscr, environments):
         start_line = HEADER_ASCII.count("\n") + 1
         stdscr.addstr(start_line, 0, "Seleccione el entorno:".center(60, "-"))
 
+        max_x = stdscr.getmaxyx()[1]
+        ancho = max(len(str(e)) for e in environments) + 10
         for idx, env in enumerate(environments, start=1):
-            line = f"{idx}. {env}"
-            if idx - 1 == selected:
-                stdscr.addstr(start_line + idx, 0, line, curses.A_REVERSE)
-            else:
-                stdscr.addstr(start_line + idx, 0, line)
+            pintar_opcion(stdscr, start_line + idx, f"{idx}. {env}", idx - 1 == selected, ancho, max_x)
 
         # Mostrar instrucciones y buffer de entrada
         input_line = start_line + len(environments) + 2
@@ -971,7 +952,7 @@ def prompt_input(stdscr, titulo, etiqueta, valor="", permitir_vacio=False, ayuda
                     stdscr.addstr(fila, 0, linea[:max_x - 1])
                     fila += 1
             fila += 1
-            stdscr.addstr(fila, 0, f"> {buffer}"[:max_x - 1], curses.A_REVERSE)
+            stdscr.addstr(fila, 0, f" › {buffer} "[:max_x - 1], ESTILO["seleccion"])
             fila += 2
             if error:
                 for linea in textwrap.wrap(error, width=max(20, max_x - 2)):

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0
+
+### Añadido
+
+- **Versión web.** `paramsx` pregunta ahora **Web o Terminal** (o `paramsx --web` / `paramsx --tui`). La web es un Flask local que se abre en el navegador: explorar las rutas de la cuenta, cargar un grupo, editar varios parámetros a la vez, revisar contra AWS en vivo (con detección de conflictos), aplicar, historial de versiones y la configuración en formulario. Es opcional: `pip install 'paramsx[web]'`. La terminal sigue igual.
+- Los grupos de `parameter_list` admiten un `"nombre"` opcional para mostrarlos en la web; la terminal lo ignora.
+
+### Cambiado
+
+- La lógica de perfiles, rutas y configuración pasa a `paramsx/core/`, compartida por la terminal y la web. Sin cambios de comportamiento en la terminal.
+
 ## 2.3.1
 
 Solo documentación: el programa es idéntico a la 2.3.0. Sale como versión porque la

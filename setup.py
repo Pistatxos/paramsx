@@ -87,11 +87,16 @@ setup(
     include_package_data=True,
     package_data={
         "paramsx": ["paramsx_config.py"],  # Asegúrate de incluir este archivo
+        "paramsx.web": ["templates/*.html", "static/*"],
     },
     install_requires= [
         "boto3",
         "windows-curses; platform_system == 'Windows'",
     ],
+    # La versión web es opcional: pip install 'paramsx[web]'
+    extras_require={
+        "web": ["flask>=2.2"],
+    },
     entry_points={
         "console_scripts": [
             "paramsx=paramsx.main:entry_point",

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParamsX</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%2315222f%27/%3E%3Ctext x=%2716%27 y=%2722%27 font-size=%2716%27 font-family=%27sans-serif%27 font-weight=%27700%27 fill=%27%236fa8ff%27 text-anchor=%27middle%27%3EX%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=version) }}">
+</head>
+<body>
+<nav class="lateral" aria-label="Secciones">
+  <div class="marca">Params<span>X</span></div>
+  <a href="#/" data-vista="params"><span class="ico">⌗</span>ParamsX</a>
+  <a href="#/ajustes" data-vista="ajustes"><span class="ico">⚙</span>Ajustes</a>
+  <a class="lateral-donde" id="pDonde" href="#/ajustes" title="Cambiar en Ajustes">…</a>
+  <div class="lateral-pie">v{{ version }} · <a href="https://github.com/Pistatxos/paramsx" target="_blank" rel="noopener noreferrer">@pistatxos</a></div>
+</nav>
+
+<main class="contenido">
+  <!-- ============================================================ ParamsX -->
+  <section class="vista" id="vParams">
+    <h1 class="titulo">Explora, carga un grupo o busca por ruta</h1>
+    <div class="aviso" id="pAviso" hidden></div>
+
+    <section class="tarjeta cargar">
+      <div class="cargar-fila">
+        <button type="button" class="primario explorar" id="pExplorar" title="Ver las rutas que hay (solo nombres) y cargar una">⌕ Explorar</button>
+        <span class="sep">o</span>
+        <label class="campo grupo-sel">Grupo<select id="pGrupo"><option value="">— Ruta libre —</option></select></label>
+        <div class="entornos" id="pEntornos" role="group" aria-label="Entorno"></div>
+      </div>
+      <div class="buscador" id="pBuscador">
+        <span class="buscador-ico" aria-hidden="true">⌕</span>
+        <input type="search" id="pRuta" placeholder="Busca por ruta o escríbela entera: rds, api, /dev/mi-app…" role="combobox" aria-expanded="false" aria-controls="pSugerencias" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
+        <div class="sugerencias" id="pSugerencias" role="listbox" hidden></div>
+      </div>
+      <p class="estado" id="pEstado"></p>
+    </section>
+
+    <div class="barra" id="pBarra" hidden>
+      <input type="search" id="pFiltro" placeholder="Filtrar en el grupo…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
+      <label class="check"><input type="checkbox" id="pMostrar"><span>Mostrar valores</span></label>
+      <span class="resumen" id="pResumen"></span>
+      <span class="barra-acciones">
+        <button type="button" class="secundario" id="pNuevo">+ Nuevo</button>
+        <button type="button" class="secundario" id="pDescartar" hidden>Descartar cambios</button>
+        <button type="button" class="primario" id="pRevisar" disabled>Revisar cambios</button>
+      </span>
+    </div>
+    <div class="lista" id="pLista"></div>
+  </section>
+
+  <!-- ============================================================ Ajustes -->
+  <section class="vista" id="vAjustes" hidden>
+    <header class="cab">
+      <div><h1>Ajustes</h1><p class="una-linea">En <code id="aFichero">~/.xsoft/paramsx_config.py</code>, el mismo que usa la terminal.</p></div>
+    </header>
+    <div class="aviso" id="aAviso" hidden></div>
+
+    <section class="tarjeta">
+      <h2>Perfil de AWS</h2>
+      <div class="fila3">
+        <label class="campo">Perfil<select id="aPerfil"></select></label>
+        <label class="campo">Región<input id="aRegion" list="aRegiones" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other"><datalist id="aRegiones"></datalist></label>
+        <div class="campo probar"><span>&nbsp;</span><div><button type="button" class="secundario" id="aProbar">Probar</button><span class="probar-res" id="aProbarRes"></span></div></div>
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>General</h2>
+      <div class="fila3">
+        <label class="campo">Entornos<input id="aEntornos" placeholder="dev, pre, prod" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other"></label>
+        <label class="campo">Perfil para los nuevos<select id="aNuevos"></select></label>
+        <label class="campo">Etiquetas obligatorias<input id="aTags" placeholder="Application, Environment, Owner…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other"></label>
+      </div>
+      <div class="fila3">
+        <label class="check" title="forzar_securestring. En la terminal, todo lo que sube va como SecureString; en la web, los nuevos nacen SecureString."><input type="checkbox" id="aSecure"><span>Los nuevos, SecureString</span></label>
+        <label class="check" title="tags_activas: las etiquetas obligatorias se exigen y se validan"><input type="checkbox" id="aTagsActivas"><span>Exigir etiquetas obligatorias</span></label>
+        <label class="check" title="obligatorias_vacias"><input type="checkbox" id="aVacias"><span>Permitir sin obligatorias</span></label>
+      </div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Perfiles · dónde va el entorno</h2>
+      <p class="ayuda">Cada opción lleva su ejemplo con el entorno <code>dev</code>. Las mayúsculas de la ruta solo se aplican al crear un parámetro nuevo.</p>
+      <table class="tabla perfiles"><colgroup><col class="c-nombre"><col><col><col><col class="c-x"></colgroup>
+        <thead><tr><th>Perfil</th><th>Entorno en la ruta</th><th>Entorno escrito en</th><th>Ruta al crear</th><th></th></tr></thead>
+        <tbody id="aPerfiles"></tbody></table>
+      <button type="button" class="enlace" id="aPerfilNuevo">+ perfil</button>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Buscar en la cuenta</h2>
+      <p class="ayuda">Escribe parte de una ruta para ver qué carpetas hay (solo nombres, nunca valores). «Añadir como grupo» detecta dónde va el entorno y elige el perfil. Busca con el perfil de AWS guardado.</p>
+      <input type="search" id="aBuscar" class="buscar" placeholder="p. ej. rds, api, common…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
+      <div class="resultados" id="aResultados" hidden></div>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Grupos</h2>
+      <p class="ayuda">Lo que eliges en ParamsX: con cada entorno, un grupo da su ruta real. Es la <code>parameter_list</code> de la terminal.</p>
+      <table class="tabla grupos"><colgroup><col class="c-gnombre"><col class="c-gruta"><col class="c-gperfil"><col><col class="c-x"></colgroup>
+        <thead><tr><th>Nombre</th><th>Ruta</th><th>Perfil</th><th>Resultado</th><th></th></tr></thead>
+        <tbody id="aGrupos"></tbody></table>
+      <button type="button" class="enlace" id="aGrupoNuevo">+ grupo</button>
+    </section>
+
+    <div class="errores" id="aErrores" hidden></div>
+    <div class="acciones"><button type="button" class="primario" id="aGuardar">Guardar</button><span class="estado" id="aEstado"></span></div>
+  </section>
+</main>
+
+<div class="modal-fondo" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <button type="button" class="modal-cerrar" id="modalCerrar" aria-label="Cerrar">✕</button>
+    <div id="modalCuerpo"></div>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="{{ url_for('static', filename='comun.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='paramsx.js', v=version) }}"></script>
+<script src="{{ url_for('static', filename='ajustes.js', v=version) }}"></script>
+</body>
+</html>
