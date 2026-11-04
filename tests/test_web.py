@@ -293,3 +293,117 @@ def test_guardar_no_reordena_perfiles(cliente, config_path):
     assert list(cfg["perfiles"]) == ["min", "max"]
     assert cliente.put("/api/config", json={"config": cfg}).status_code == 200
     assert list(core_config.cargar_config_literal(config_path)["perfiles"]) == ["min", "max"]
+
+
+def renombrar(p, nuevo):
+    """Lo que manda «Reemplazar» en nombres: el alta del nuevo (con «de») y el borrado del viejo."""
+    return [item(p, accion="nuevo", name=nuevo, version=None, de=p["name"]), item(p, accion="borrar")]
+
+
+def test_renombrar_conserva_la_clave_kms_y_nunca_pierde_el_viejo(cliente, ssm, monkeypatch):
+    clave = "arn:aws:kms:eu-south-2:1:key/propia"
+    ssm.poner("/dev/app/db", "secreto", tags=TAGS, key_id=clave)
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=TAGS)
+    ssm.poner("/dev/app/grande", "ya estaba", tipo="String", tags=TAGS)
+    ps = cargar(cliente)
+    r = cliente.post("/api/aplicar", json={"items": renombrar(ps["/dev/app/db"], "/dev/app/db2"),
+                                           "confirmacion": CONFIRMA, "borrados": "1"}).get_json()
+    assert all(x["ok"] for x in r["resultados"]), r
+    assert ssm.ops("PutParameter")[0]["KeyId"] == clave  # la clave propia del viejo, no la de por defecto
+    assert ssm.params["/dev/app/db2"]["key_id"] == clave and "/dev/app/db" not in ssm.params
+
+    # El nuevo nombre ya existe en AWS: la revisión no deja borrar el viejo
+    filas = {f["name"]: f for f in cliente.post("/api/plan", json={
+        "items": renombrar(ps["/dev/app/url"], "/dev/app/grande")}).get_json()["plan"]}
+    assert "No se borra" in " ".join(filas["/dev/app/url"]["errores"])
+
+    # Y si falla al crearlo en AWS (aquí, otro lo crea justo antes), el viejo tampoco se borra
+    real = ssm.put_parameter
+
+    def lo_crea_otro(**kw):
+        if kw["Name"] not in ssm.params:
+            ssm.poner(kw["Name"], "de otro", tipo="String")
+        return real(**kw)
+    monkeypatch.setattr(ssm, "put_parameter", lo_crea_otro)
+    r = {x["name"]: x for x in cliente.post("/api/aplicar", json={
+        "items": renombrar(ps["/dev/app/url"], "/dev/app/url2"), "confirmacion": CONFIRMA,
+        "borrados": "1"}).get_json()["resultados"]}
+    assert not r["/dev/app/url2"]["ok"] and not r["/dev/app/url"]["ok"]
+    assert "No se borra" in r["/dev/app/url"]["error"]
+    assert "/dev/app/url" in ssm.params and not [o for o in ssm.ops("DeleteParameters") if "/dev/app/url" in o["Names"]]
+
+
+# ---------------------------------------------------------------- nombre sin barra final
+
+def test_nuevo_con_barra_final_se_quita(cliente, ssm):
+    nuevo = {"name": " /dev/app/n// ", "accion": "nuevo", "value": "v", "type": "String", "tags": TAGS}
+    plan = cliente.post("/api/plan", json={"items": [dict(nuevo)]}).get_json()["plan"]
+    assert plan[0]["name"] == "/dev/app/n" and not plan[0]["errores"]
+    r = cliente.post("/api/aplicar", json={"items": [nuevo], "confirmacion": CONFIRMA}).get_json()
+    assert r["resultados"][0]["ok"] and r["resultados"][0]["name"] == "/dev/app/n"
+    assert ssm.ops("PutParameter")[0]["Name"] == "/dev/app/n" and "/dev/app/n" in ssm.params
+    # Solo barras: no queda nombre, así que se deja y la revisión lo rechaza
+    solo = cliente.post("/api/plan", json={"items": [{**nuevo, "name": "//"}]}).get_json()["plan"][0]
+    assert solo["name"] == "//" and solo["errores"]
+
+
+def test_editar_con_barra_final_no_se_toca(cliente, ssm):
+    # Solo los nuevos: un existente se manda por su nombre tal cual
+    plan = cliente.post("/api/plan", json={"items": [
+        {"name": "/dev/app/x/", "accion": "editar", "value": "v", "type": "String", "tags": TAGS}]}).get_json()["plan"]
+    assert plan[0]["name"] == "/dev/app/x/" and plan[0]["errores"]
+
+
+# ---------------------------------------------------------------- JS: lo que no se aplicó no se pierde
+
+def _funcion_js(fuente, nombre):
+    """El código de `function nombre(...) {...}` de paramsx.js (va sangrado dos espacios dentro del IIFE)."""
+    ini = fuente.index(f"  function {nombre}(")
+    return fuente[ini:fuente.index("\n  }\n", ini) + 4]
+
+
+def test_js_reponer_lo_no_aplicado(tmp_path):
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Sin node no se puede probar el JS")
+    fuente = (Path(__file__).parent.parent / "paramsx/web/static/paramsx.js").read_text(encoding="utf-8")
+    script = _funcion_js(fuente, "reponer") + r"""
+    // Lo recién cargado de AWS: a se aplicó (v2), b no (falló), c era conflicto (en AWS ya va por v5)
+    const de = (name, value, version) => ({ name, value, type: 'String', description: '', tags: { A: '1' }, borrar: false, nuevo: false,
+      orig: { name, value, type: 'String', description: '', tags: { A: '1' }, version } });
+    const items = [de('/r/a', 'a-nuevo', 2), de('/r/b', 'b', 1), de('/r/c', 'c-de-otro', 5), de('/r/d', 'd', 1)];
+    const sinHacer = [
+      { name: '/r/n1', value: 'v1', type: 'SecureString', description: 'uno', tags: { ManagedBy: 'paramsx' }, nuevo: true, borrar: false, orig: null },
+      { name: '/r/n2', value: 'v2', type: 'String', description: '', tags: {}, nuevo: true, borrar: false, orig: null },
+      { ...de('/r/b', 'b-editado', 1), description: 'desc', type: 'SecureString', tags: { A: '2' } },
+      { ...de('/r/c', 'c-mio', 3) },
+      { ...de('/r/d', 'd', 1), borrar: true },
+      { ...de('/r/ya-no-esta', 'x', 1) },
+    ];
+    const r = reponer(items, sinHacer, new Set(['/r/c']));
+    console.log(JSON.stringify(r));
+    """
+    ruta = tmp_path / "prueba.js"
+    ruta.write_text(script, encoding="utf-8")
+    out = json.loads(subprocess.run([node, str(ruta)], capture_output=True, text=True, check=True).stdout)
+    por = {p["name"]: p for p in out}
+    # Los nuevos, arriba y en su orden, con todo lo que llevaban
+    assert [p["name"] for p in out[:2]] == ["/r/n1", "/r/n2"]
+    assert por["/r/n1"]["value"] == "v1" and por["/r/n1"]["description"] == "uno" and por["/r/n1"]["type"] == "SecureString"
+    assert por["/r/n1"]["tags"] == {"ManagedBy": "paramsx"}
+    # Lo aplicado, como viene de AWS
+    assert por["/r/a"]["value"] == "a-nuevo" and por["/r/a"]["orig"]["version"] == 2
+    # Lo que falló, con lo editado otra vez encima de lo leído
+    b = por["/r/b"]
+    assert (b["value"], b["description"], b["type"], b["tags"]) == ("b-editado", "desc", "SecureString", {"A": "2"})
+    assert b["orig"]["value"] == "b"
+    # El conflicto conserva la versión que se cargó, para que la revisión lo siga marcando
+    assert por["/r/c"]["value"] == "c-mio" and por["/r/c"]["orig"]["version"] == 3
+    assert por["/r/d"]["borrar"] is True
+    # Lo que ya no está en AWS no se inventa
+    assert "/r/ya-no-esta" not in por and len(out) == 6

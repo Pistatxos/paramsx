@@ -39,6 +39,12 @@ class ErrorWeb(Exception):
         self.mensaje, self.status, self.extra = mensaje, status, extra
 
 
+def sin_barra_final(nombre):
+    """«/dev/app/x/» → «/dev/app/x». Si no queda nada más que barras, se deja (lo rechaza la revisión)."""
+    nombre = nombre.strip()
+    return nombre.rstrip("/") or nombre
+
+
 def _sesion_boto3(perfil, region):
     return boto3.Session(profile_name=perfil or None, region_name=region or None)
 
@@ -245,7 +251,11 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
         items = datos.get("items")
         if not isinstance(items, list) or not items or len(items) > MAX_ITEMS:
             raise ErrorWeb("No hay cambios que revisar.")
-        return [it for it in items if isinstance(it, dict)]
+        items = [it for it in items if isinstance(it, dict)]
+        for it in items:  # un parámetro no puede acabar en «/»: en los nuevos se quita en vez de dar error en AWS
+            if it.get("accion") == "nuevo" and isinstance(it.get("name"), str):
+                it["name"] = sin_barra_final(it["name"])
+        return items
 
     # ------------------------------------------------------------ páginas
 

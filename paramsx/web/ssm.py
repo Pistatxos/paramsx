@@ -305,8 +305,10 @@ def validar_item(it, cfg):
 def _revisar(ssm, items, cfg):
     """El plan y lo leído de AWS para hacerlo: (filas, meta). Se lee AWS en este momento."""
     nombres = sorted({it["name"] for it in items if isinstance(it, dict) and it.get("name")})
+    # De los renombrados también se lee el viejo (su clave KMS pasa al nuevo), aunque no se borre
+    viejos = {it["de"] for it in items if it.get("accion") == "nuevo" and isinstance(it.get("de"), str) and it["de"]}
     try:
-        meta = describir(ssm, "", nombres) if nombres else {}
+        meta = describir(ssm, "", sorted(set(nombres) | viejos)) if nombres else {}
     except ClientError as exc:
         if not denegado(exc):
             raise ParametrosError(motivo(exc)) from None
@@ -352,6 +354,13 @@ def _revisar(ssm, items, cfg):
         else:
             fila["errores"].append("Acción no válida.")
         filas.append(fila)
+
+    # Renombrar es crear el nuevo y borrar el viejo: si el nuevo no se puede crear, el viejo no se borra (se perdería)
+    borrados = {f["name"]: f for f in filas if f["accion"] == "borrar"}
+    for it, fila in zip(items, filas):
+        viejo = borrados.get(it.get("de") or "") if it.get("accion") == "nuevo" else None
+        if viejo and fila["errores"] and not viejo["errores"]:
+            viejo["errores"].append(f"No se borra: su nuevo nombre ({fila['name']}) no se puede crear.")
     return filas, meta or {}
 
 
@@ -401,7 +410,7 @@ def aplicar(ssm, items, cfg):
     [{name, accion, ok, error, version, cambios}] sin valores."""
     filas, meta = _revisar(ssm, items, cfg)
     revisado = {f["name"]: f for f in filas}
-    resultados, borrar = [], []
+    resultados, borrar, sin_sustituto = [], [], set()
 
     for it in items:
         nombre, accion = it.get("name", ""), it.get("accion")
@@ -416,11 +425,20 @@ def aplicar(ssm, items, cfg):
             borrar.append(res)
             continue
         try:
-            res["version"] = _aplicar_uno(ssm, it, fila, meta.get(nombre, {}), accion)
+            m = meta.get(it.get("de") or "", {}) if accion == "nuevo" else meta.get(nombre, {})
+            res["version"] = _aplicar_uno(ssm, it, fila, m, accion)
             res["ok"] = True
         except (ClientError, BotoCoreError) as exc:
             res["error"] = motivo(exc)
+            if accion == "nuevo" and it.get("de"):
+                sin_sustituto.add(it["de"])
         resultados.append(res)
+
+    # Su nuevo nombre no se pudo crear: el viejo se queda
+    for b in [b for b in borrar if b["name"] in sin_sustituto]:
+        b["error"] = "No se borra: su nuevo nombre no se pudo crear."
+        borrar.remove(b)
+        resultados.append(b)
 
     # Borrados de 10 en 10 (el máximo de DeleteParameters)
     for i in range(0, len(borrar), 10):
@@ -452,6 +470,9 @@ def _aplicar_uno(ssm, it, fila, m, accion):
             kw["Tags"] = tags
         if grande:
             kw["Tier"] = "Advanced"
+        # Renombrado (m es el viejo): se conserva su clave KMS propia en vez de la de por defecto
+        if it["type"] == "SecureString" and m.get("key_id") and m["key_id"] not in KMS_DEFECTO:
+            kw["KeyId"] = m["key_id"]
         return _put(ssm, **kw).get("Version")
 
     version = None

@@ -11,6 +11,9 @@
   const obligatorias = () => cfg().tags_activas ? (cfg().tags_obligatorias || []) : [];
   const entornoDe = seg => cfg().entornos.find(e => e === String(seg).toLowerCase());
   const claseEntorno = e => !e ? '' : /^prod/.test(e) ? 'prod' : /^(stg|pre|staging|qa|test|uat)/.test(e) ? 'stg' : 'dev';
+  // Un parámetro no puede acabar en «/»: se quitan las barras finales si queda algo más (el servidor hace lo mismo)
+  const sinBarraFinal = n => { const t = String(n || '').trim(); return t.replace(/\/+$/, '') || t; };
+  const nombreEnvio = p => p.nuevo ? sinBarraFinal(p.name) : p.name.trim();
 
   // ------------------------------------------------ perfil, región y grupos
   async function pintarDonde() {
@@ -272,6 +275,7 @@
     if (e.target.dataset.campo !== 'name') return;
     const input = e.target, p = S.items[+input.closest('.param').dataset.i];
     const g = grupoSel();
+    p.name = sinBarraFinal(p.name); input.value = p.name;
     try {
       const r = await post('/api/nombre-nuevo', { base: S.ruta, nombre: p.name.trim(), perfil: g ? g.perfil : '' });
       p.name = r.nombre;
@@ -305,6 +309,7 @@
     if (!S.ruta) return toast('Carga antes un grupo o una ruta.', true);
     const entorno = S.entorno || (S.ruta.split('/').map(entornoDe).find(Boolean) || '');
     const tags = Object.fromEntries(obligatorias().map(k => [k, k === 'Environment' ? entorno : '']));
+    tags.ManagedBy = tags.ManagedBy || 'paramsx';  // quién lo creó; si es obligatoria, ya va rellena
     S.items.unshift({ name: S.ruta.replace(/\/$/, '') + '/', type: cfg().forzar_securestring === false ? 'String' : 'SecureString', value: '', description: '', tags, nuevo: true, borrar: false, ver: true, orig: null, descripcion_legible: true });
     pintar();
     const input = $('pLista').querySelector('[data-i="0"] [data-campo="name"]');
@@ -319,8 +324,8 @@
   window.addEventListener('beforeunload', e => { if (pendientes().length) { e.preventDefault(); e.returnValue = ''; } });
 
   // ------------------------------------------------ revisar y aplicar
-  const paraEnviar = () => pendientes().map(p => ({ name: p.name.trim(), accion: p.nuevo ? 'nuevo' : p.borrar ? 'borrar' : 'editar', version: p.orig ? p.orig.version : null,
-    value: p.value, description: p.description || '', type: p.type, tags: p.tags }));
+  const paraEnviar = () => pendientes().map(p => ({ name: nombreEnvio(p), accion: p.nuevo ? 'nuevo' : p.borrar ? 'borrar' : 'editar', version: p.orig ? p.orig.version : null,
+    value: p.value, description: p.description || '', type: p.type, tags: p.tags, ...(p.nuevo && p.de ? { de: p.de } : {}) }));
   const ETIQUETA = { nuevo: 'Nuevo', editar: 'Modificado', borrar: 'Borrar' };
   $('pRevisar').onclick = async () => {
     const items = paraEnviar();
@@ -332,7 +337,7 @@
     const frase = `APLICAR EN ${r.account}`;
     modal.abrir(`<h2>Revisar cambios</h2><p>Comparado con lo que hay ahora en AWS, en la cuenta <b>${esc(r.account)}</b> · ${esc(r.region_name)}.${r.plan.length - validos.length ? ` <span class="warn">${r.plan.length - validos.length} no se aplicarán (ver motivo).</span>` : ''}${conflictos ? ' <b class="error">Hay conflictos: recarga el grupo para ver lo que hay ahora.</b>' : ''}</p>
       <div class="plan">${r.plan.map(f => {
-        const actual = S.items.find(p => p.name.trim() === f.name) || {};
+        const actual = S.items.find(p => nombreEnvio(p) === f.name) || {};
         return `<div class="plan-fila ${f.errores.length ? 'mal' : ''}"><div>${f.conflicto ? '<span class="pill conflicto">Conflicto</span>' : `<span class="pill ${f.errores.length ? 'mal' : f.accion}">${ETIQUETA[f.accion] || esc(f.accion)}</span>`}<code>${esc(f.name)}</code> ${f.accion === 'editar' ? f.cambios.map(c => `<span class="cambio">${esc(c)}</span>`).join(' ') : ''}</div>
         ${f.errores.map(x => `<small class="error">${esc(x)}</small>`).join('')}${f.avisos.map(x => `<small class="warn">⚠ ${esc(x)}</small>`).join('')}
         ${f.cambios.includes('valor') && f.accion === 'editar' ? `<details><summary>Ver el valor antes y después</summary><div class="diff"><div><small>Ahora en AWS</small><pre>${esc(f.antes ?? '')}</pre></div><div><small>Después</small><pre>${esc(actual.value ?? '')}</pre></div></div></details>` : ''}
@@ -355,10 +360,110 @@
         const ok = res.resultados.filter(x => x.ok).length, mal = res.resultados.filter(x => !x.ok);
         modal.abrir(`<h2>${mal.length ? 'Aplicado en parte' : 'Aplicado'}</h2><p>${ok} de ${res.resultados.length} cambios hechos en AWS. El grupo se ha vuelto a cargar.</p>${mal.length ? `<div class="plan">${mal.map(x => `<div class="plan-fila mal"><code>${esc(x.name)}</code><small class="error">${esc(x.error)}</small></div>`).join('')}</div>` : ''}<div class="acciones"><button type="button" class="primario" id="pSeguir">Cerrar</button></div>`);
         $('pSeguir').onclick = modal.cerrar;
-        S.items = []; S.carpetas = null;  // se recarga de AWS (puede haber rutas nuevas o borradas)
+        // Se recarga de AWS (puede haber rutas nuevas o borradas), pero lo que no se aplicó (falló o la revisión lo dejó
+        // fuera) se guarda antes y se vuelve a poner, para corregirlo sin escribirlo otra vez
+        const hechos = new Set(res.resultados.filter(x => x.ok).map(x => x.name));
+        const sinHacer = pendientes().filter(p => !hechos.has(nombreEnvio(p))).map(p => ({ ...p, name: nombreEnvio(p) }));
+        const conflictos = new Set([...r.plan.filter(f => f.conflicto).map(f => f.name), ...mal.filter(x => /^Conflicto/.test(x.error)).map(x => x.name)]);
+        S.items = []; S.carpetas = null;
         await cargar();
+        if (sinHacer.length && S.ruta) { reponer(S.items, sinHacer, conflictos); pintar(); }
         toast(mal.length ? `${ok} aplicados, ${mal.length} con error` : `${ok} cambios aplicados`, !!mal.length);
       } catch (e) { $('pAplicar').disabled = false; $('pAplicar').textContent = 'Aplicar'; toast(e.message, true); }
+    };
+  };
+
+  // Tras aplicar y recargar: pone otra vez sobre lo recién leído de AWS lo que no se aplicó. Los nuevos, arriba y en
+  // su orden; en los existentes, lo editado y la marca de borrar. Si era un conflicto, se queda con la versión que se
+  // cargó entonces, para que la revisión lo siga marcando y no pise sin avisar el cambio de otro.
+  function reponer(items, sinHacer, conflictos) {
+    for (const g of [...sinHacer].reverse()) {
+      if (g.nuevo) { items.unshift(g); continue; }
+      const p = items.find(q => q.name === g.name); if (!p) continue;
+      Object.assign(p, { value: g.value, description: g.description, type: g.type, tags: g.tags ? { ...g.tags } : p.tags, borrar: g.borrar, ver: g.ver });
+      if (conflictos.has(g.name) && g.orig) p.orig = { ...p.orig, version: g.orig.version };
+    }
+    return items;
+  }
+
+  // ------------------------------------------------ reemplazar (buscar y reemplazar en lo que se ve con el filtro)
+  // Solo cambia el editor, como si se hubiera escrito a mano; después, «Revisar cambios» como siempre. Un nombre nuevo es
+  // crear otro parámetro con lo mismo y borrar el viejo (en SSM no se puede renombrar).
+  const escRe = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const recorte = (t, re) => {  // en valores largos, el trozo de alrededor de la primera coincidencia
+    const m = t.search(re); if (t.length <= 90 || m < 0) return t;
+    const ini = Math.max(0, m - 35); return (ini ? '…' : '') + t.slice(ini, ini + 90) + (ini + 90 < t.length ? '…' : '');
+  };
+  const visibles = () => [...$('pLista').querySelectorAll('.param:not([hidden])')].map(c => +c.dataset.i);
+  function coincidencias(buscar, por, donde, mayus) {
+    const reT = new RegExp(escRe(buscar), mayus ? '' : 'i'), reG = new RegExp(escRe(buscar), mayus ? 'g' : 'gi'), out = [];
+    for (const i of visibles()) {
+      const p = S.items[i]; if (!p || p.bloqueado || p.borrar) continue;
+      const mira = (campo, clave, antes) => {
+        if (typeof antes !== 'string' || !reT.test(antes)) return;
+        const despues = antes.replace(reG, () => por);
+        if (despues === antes) return;  // no cambia nada (y un nombre igual sería crear y borrar el mismo)
+        out.push({ i, campo, clave, antes, despues, n: (antes.match(reG) || []).length, reT });
+      };
+      if (donde.nombre) mira('nombre', '', p.name);
+      if (donde.valor) mira('valor', '', p.value);
+      if (donde.descripcion && p.descripcion_legible !== false) mira('descripción', '', p.description || '');
+      if (donde.etiquetas && p.tags) Object.entries(p.tags).forEach(([k, v]) => mira('etiqueta', k, String(v)));
+    }
+    return out;
+  }
+  $('pReemplazar').onclick = () => {
+    if (!S.ruta) return toast('Carga antes un grupo o una ruta.', true);
+    const n = visibles().length;
+    modal.abrir(`<h2>Reemplazar</h2><p>En los ${n} parámetros que ves ahora${$('pFiltro').value.trim() ? ' (con el filtro)' : ''}. Solo cambia el editor: después, «Revisar cambios» como siempre.</p>
+      <div class="reemplazar"><label class="campo">Buscar<input id="rBuscar" ${NOFILL}></label><label class="campo">Reemplazar por<input id="rPor" ${NOFILL}></label></div>
+      <div class="reemplazar-donde"><span class="reemplazar-et">Buscar en</span><span class="pildoras">${[['rValor', 'Valores', true], ['rNombre', 'Nombres', false], ['rEtiquetas', 'Etiquetas', false], ['rDesc', 'Descripciones', false]]
+        .map(([id, t, on]) => `<label class="pildora"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span>${t}</span></label>`).join('')}</span>
+        <label class="pildora sola"><input type="checkbox" id="rMayus"><span>Aa · distinguir mayúsculas</span></label></div>
+      <p class="aviso reemplazar-aviso" id="rAvisoNombre" hidden>⚠ En SSM un parámetro no se renombra: se crea uno nuevo con el mismo valor, tipo, descripción y etiquetas, y se borra el viejo. Lo que lo lea por el nombre viejo dejará de encontrarlo, y su historial de versiones no pasa al nuevo. Si el nuevo no se puede crear, el viejo no se borra.</p>
+      <div id="rLista" class="reemplazar-lista"><p class="muted">Escribe qué buscar.</p></div>
+      <div class="acciones"><button type="button" class="primario" id="rPoner" disabled>Poner en el editor</button><button type="button" class="secundario" id="rNo">Cancelar</button></div>`);
+    let lista = [];
+    const donde = () => ({ valor: $('rValor').checked, nombre: $('rNombre').checked, etiquetas: $('rEtiquetas').checked, descripcion: $('rDesc').checked });
+    const oculto = c => c.campo === 'valor' && S.items[c.i].type === 'SecureString' && !S.items[c.i].ver && !$('pMostrar').checked;
+    const ver = () => {
+      const buscar = $('rBuscar').value;
+      $('rAvisoNombre').hidden = !$('rNombre').checked;
+      lista = buscar ? coincidencias(buscar, $('rPor').value, donde(), $('rMayus').checked) : [];
+      const rePor = new RegExp(escRe($('rPor').value) || '^');
+      $('rLista').innerHTML = !buscar ? '<p class="muted">Escribe qué buscar.</p>' : !lista.length ? '<p class="muted">Nada que coincida.</p>'
+        : `<p class="reemplazar-cuenta">${lista.length} ${lista.length === 1 ? 'cambio' : 'cambios'} en ${new Set(lista.map(c => c.i)).size} parámetros · desmarca los que no quieras</p>
+          <table class="reemplazar-tabla"><thead><tr><th><input type="checkbox" id="rTodos" checked title="Todos" aria-label="Todos"></th><th>Parámetro</th><th>Dónde</th><th>Antes → después</th></tr></thead><tbody>${lista.map((c, k) => `<tr>
+          <td><input type="checkbox" data-r="${k}" checked aria-label="Aplicar este cambio"></td><td><code>${esc(S.items[c.i].name)}</code></td>
+          <td><span class="cambio">${c.campo}${c.clave ? ' · ' + esc(c.clave) : ''}</span>${c.n > 1 ? `<small>${c.n} veces</small>` : ''}</td>
+          <td>${oculto(c) ? '<small class="muted">Valor cifrado: marca «Mostrar valores» para verlo</small>'
+            : `<span class="reemplazar-antes">${esc(recorte(c.antes, c.reT))}</span><span class="reemplazar-despues">${esc(recorte(c.despues, rePor))}</span>`}</td></tr>`).join('')}</tbody></table>`;
+      if ($('rTodos')) $('rTodos').addEventListener('change', e => $('rLista').querySelectorAll('[data-r]').forEach(x => { x.checked = e.target.checked; }));
+      $('rPoner').disabled = !lista.length;
+    };
+    ['rBuscar', 'rPor'].forEach(id => $(id).addEventListener('input', ver));
+    ['rValor', 'rNombre', 'rEtiquetas', 'rDesc', 'rMayus'].forEach(id => $(id).addEventListener('change', ver));
+    $('rNo').onclick = modal.cerrar; $('rBuscar').focus();
+    $('rPoner').onclick = () => {
+      const elegidos = lista.filter((_, k) => ($('rLista').querySelector(`[data-r="${k}"]`) || {}).checked);
+      const nombres = elegidos.filter(c => c.campo === 'nombre'), choques = [];
+      for (const c of elegidos.filter(c => c.campo !== 'nombre')) {
+        const p = S.items[c.i];
+        if (c.campo === 'valor') p.value = c.despues;
+        else if (c.campo === 'descripción') p.description = c.despues;
+        else p.tags = { ...p.tags, [c.clave]: c.despues };
+      }
+      // Los nombres al final y de abajo arriba: cada nuevo va justo debajo del que sustituye, y el viejo se marca para borrar
+      for (const c of nombres.sort((a, b) => b.i - a.i)) {
+        const p = S.items[c.i], nuevo = sinBarraFinal(c.despues);
+        if (S.items.some(q => q !== p && nombreEnvio(q) === nuevo)) { choques.push(nuevo); continue; }
+        if (p.nuevo) { p.name = nuevo; continue; }
+        const copia = { name: nuevo, type: p.type, value: p.value, description: p.description || '', tags: p.tags ? { ...p.tags } : {}, nuevo: true, borrar: false, ver: p.ver, orig: null, descripcion_legible: true, de: p.name };
+        Object.assign(p, { value: p.orig.value, type: p.orig.type, description: p.orig.description, tags: p.orig.tags ? { ...p.orig.tags } : null, borrar: true });
+        S.items.splice(c.i + 1, 0, copia);
+      }
+      modal.cerrar(); pintar();
+      toast(`${elegidos.length - choques.length} ${elegidos.length - choques.length === 1 ? 'cambio puesto' : 'cambios puestos'} en el editor${choques.length ? `; ${choques.length} ${choques.length === 1 ? 'nombre no, porque ya existe' : 'nombres no, porque ya existen'}: ${choques.join(', ')}` : ''}. Revisa y aplica.`, !!choques.length);
     };
   };
 
