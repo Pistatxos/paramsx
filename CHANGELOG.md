@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.0
+
+### Añadido
+
+- **Reemplazar** en la web (botón «Reemplazar…» de la barra): buscar y reemplazar en valores, nombres, etiquetas o descripciones de los parámetros que se ven (con el filtro), con vista previa y una casilla por cambio. Solo cambia el editor: después se revisa y se aplica como siempre. Renombrar es crear uno nuevo con lo mismo y borrar el viejo, porque SSM no renombra.
+- Los parámetros nuevos de la web traen la etiqueta `ManagedBy=paramsx`.
+
+### Corregido
+
+- **Lo que falla al aplicar ya no se pierde**: tras aplicar se recarga de AWS, pero lo que no se aplicó (error o no válido en la revisión) vuelve a ponerse en el editor. Si era un conflicto de versión, la siguiente revisión lo sigue marcando.
+- Un parámetro nuevo cuyo nombre acaba en `/` ya no da error en AWS: se quitan las barras finales.
+- **Renombrar nunca pierde el parámetro**: si el nuevo nombre no se puede crear (ya existe, sin permiso, error de AWS), el viejo no se borra. El nuevo conserva la clave KMS propia del viejo.
+
 ## 2.4.1
 
 ### Cambiado
