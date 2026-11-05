@@ -440,6 +440,30 @@ def aplicar(ssm, items, cfg):
         borrar.remove(b)
         resultados.append(b)
 
+    # Justo antes de borrar, otra vez la versión de cada uno (sin valores ni descifrar): si alguien lo ha cambiado desde
+    # la revisión (también mientras se creaban los renombrados), no se borra. SSM no tiene «borrar solo si sigue en la
+    # versión N»: entre esta lectura y el borrado queda una ventana de milisegundos que no se puede cerrar desde aquí.
+    esperada = {it.get("name"): it.get("version") for it in items if it.get("accion") == "borrar" and it.get("version")}
+    copia_de = {it.get("de"): it.get("name") for it in items if it.get("accion") == "nuevo" and it.get("de")}
+    try:
+        ahora = describir(ssm, "", [b["name"] for b in borrar]) if borrar else {}
+    except (ClientError, BotoCoreError) as exc:
+        if not denegado(exc):
+            # Otro fallo (red, límite de llamadas...): sin comprobar no se borra, pero lo ya aplicado se devuelve
+            for b in borrar:
+                b["error"] = f"No se pudo comprobar la versión antes de borrar ({motivo(exc)}): no se borra."
+            resultados += borrar
+            return resultados
+        ahora = None  # sin permiso para describir: se borra como antes (ya se comprobó al revisar)
+    for b in [b for b in borrar if ahora is not None and b["name"] in ahora and b["name"] in esperada
+              and ahora[b["name"]].get("version") != esperada[b["name"]]]:
+        b["error"] = (f"Ha cambiado en AWS mientras se aplicaba (versión {esperada[b['name']]} → "
+                      f"{ahora[b['name']].get('version')}): no se borra. "
+                      + (f"Su copia «{copia_de[b['name']]}» se creó con el valor de antes: revisa cuál dejar."
+                         if b["name"] in copia_de else "Recarga el grupo."))
+        borrar.remove(b)
+        resultados.append(b)
+
     # Borrados de 10 en 10 (el máximo de DeleteParameters)
     for i in range(0, len(borrar), 10):
         lote = borrar[i:i + 10]

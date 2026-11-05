@@ -333,6 +333,71 @@ def test_renombrar_conserva_la_clave_kms_y_nunca_pierde_el_viejo(cliente, ssm, m
     assert "/dev/app/url" in ssm.params and not [o for o in ssm.ops("DeleteParameters") if "/dev/app/url" in o["Names"]]
 
 
+def test_si_el_original_cambia_mientras_se_aplica_no_se_borra(cliente, ssm, monkeypatch):
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=TAGS)
+    ssm.poner("/dev/app/b", "b", tipo="String", tags=TAGS)
+    ps = cargar(cliente)
+    aplicar = lambda items: {x["name"]: x for x in cliente.post("/api/aplicar", json={  # noqa: E731
+        "items": items, "confirmacion": CONFIRMA, "borrados": "1"}).get_json()["resultados"]}
+
+    # Mientras se crea la copia renombrada, otro cambia el original
+    real = ssm.put_parameter
+
+    def y_otro_cambia_el_original(**kw):
+        r = real(**kw)
+        if kw["Name"] == "/dev/app/url2":
+            real(Name="/dev/app/url", Value="https://nuevo", Overwrite=True)
+        return r
+    monkeypatch.setattr(ssm, "put_parameter", y_otro_cambia_el_original)
+    r = aplicar(renombrar(ps["/dev/app/url"], "/dev/app/url2"))
+    assert r["/dev/app/url2"]["ok"] and not r["/dev/app/url"]["ok"]
+    assert "Ha cambiado en AWS mientras se aplicaba (versión 1 → 2)" in r["/dev/app/url"]["error"]
+    assert "«/dev/app/url2»" in r["/dev/app/url"]["error"]  # avisa de la copia con el valor de antes
+    assert ssm.params["/dev/app/url"]["value"] == "https://nuevo"  # el cambio del otro no se pierde
+    assert ssm.ops("DeleteParameters") == []
+    monkeypatch.setattr(ssm, "put_parameter", real)
+
+    # Un borrado normal: lo cambian entre la revisión y el borrado
+    revisar_real = ssm_web._revisar
+
+    def revisa_y_cambia(*a, **k):
+        out = revisar_real(*a, **k)
+        ssm.poner("/dev/app/b", "b-de-otro", tipo="String")
+        return out
+    monkeypatch.setattr(ssm_web, "_revisar", revisa_y_cambia)
+    r = aplicar([item(ps["/dev/app/b"], accion="borrar")])
+    assert not r["/dev/app/b"]["ok"] and "Recarga el grupo" in r["/dev/app/b"]["error"]
+    assert "/dev/app/b" in ssm.params and ssm.ops("DeleteParameters") == []
+
+    # Sin permiso para volver a leerla: se borra como antes (ya se comprobó al revisar)
+    def revisa_y_quita_describe(*a, **k):
+        out = revisar_real(*a, **k)
+        ssm.sin_describe = True
+        return out
+    monkeypatch.setattr(ssm_web, "_revisar", revisa_y_quita_describe)
+    ssm.poner("/dev/app/c", "c", tipo="String")
+    r = aplicar([{"name": "/dev/app/c", "accion": "borrar", "version": 1}])
+    assert r["/dev/app/c"]["ok"] and "/dev/app/c" not in ssm.params
+    ssm.sin_describe = False
+
+    # Si falla de otra forma al leerla, no se borra (sin comprobar no se toca)
+    def revisa_y_rompe(*a, **k):
+        out = revisar_real(*a, **k)
+        monkeypatch.setattr(ssm, "describe_parameters", lambda **kw: (_ for _ in ()).throw(
+            ssm_web.ClientError({"Error": {"Code": "ThrottlingException", "Message": "Rate exceeded"}}, "Op")))
+        return out
+    monkeypatch.setattr(ssm_web, "_revisar", revisa_y_rompe)
+    ssm.poner("/dev/app/d", "d", tipo="String")
+    r = aplicar([{"name": "/dev/app/d", "accion": "borrar", "version": 1}])
+    assert not r["/dev/app/d"]["ok"] and "No se pudo comprobar" in r["/dev/app/d"]["error"]
+    assert "/dev/app/d" in ssm.params
+    monkeypatch.undo()
+
+    # Sin cambios, se borra como siempre (b va ya por la versión 2)
+    r = aplicar([{"name": "/dev/app/b", "accion": "borrar", "version": 2}])
+    assert r["/dev/app/b"]["ok"] and "/dev/app/b" not in ssm.params
+
+
 # ---------------------------------------------------------------- nombre sin barra final
 
 def test_nuevo_con_barra_final_se_quita(cliente, ssm):

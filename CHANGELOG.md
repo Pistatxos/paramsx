@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.1
+
+### Corregido
+
+- **Un borrado ya no pisa el cambio de otro**: justo antes de borrar se vuelve a leer la versión de cada parámetro (sin valores). Si alguien lo ha cambiado desde la revisión (también mientras se creaba la copia de un renombrado), no se borra y se avisa; en un renombrado, se dice que la copia se creó con el valor de antes. Si el rol no puede leer la versión, se borra como antes; si la lectura falla por otro motivo, no se borra.
+
 ## 2.5.0
 
 ### Añadido
