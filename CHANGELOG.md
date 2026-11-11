@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.5
+
+### Corregido
+
+- **Instalar o construir paramsx ya no toca tu `~/.zshrc` ni tu `~/.bashrc`.** El `setup.py` tenía una orden de instalación propia que añadía una línea `export PATH=…` cada vez (también al construir el paquete con `python -m build`, con una carpeta temporal que luego no existe). pip ya crea el comando `paramsx`; cómo ponerlo en el PATH está en el README.
+
 ## 2.5.4
 
 ### Añadido
