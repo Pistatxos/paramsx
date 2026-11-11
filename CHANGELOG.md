@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.2
+
+### Corregido
+
+- **Buscar un parámetro que existe ya no dice que no está**:
+  - En «Ruta» vale también el **nombre completo de un parámetro** (antes solo carpetas: «/dev/app/clave» no encontraba nada) y los parámetros **sin carpeta** (`MiParametro`).
+  - El buscador de «Ruta» sugiere también los **parámetros**, no solo las carpetas.
+  - Con **más de 2.000 parámetros** en la cuenta, el buscador y el filtro de Explorar preguntan también a AWS lo que se escribe; antes solo buscaban en los 2.000 primeros.
+  - Explorar muestra los parámetros sin carpeta.
+
 ## 2.5.1
 
 ### Corregido

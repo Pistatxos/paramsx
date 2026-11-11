@@ -81,8 +81,11 @@ def _meta(p):
     }
 
 
-def describir(ssm, ruta, nombres=None):
-    """{nombre: metadatos} (sin valores) de una ruta (recursivo) o de unos nombres concretos."""
+def describir(ssm, ruta, nombres=None, contiene=""):
+    """{nombre: metadatos} (sin valores) de una ruta (recursivo), de unos nombres concretos o de los
+    que llevan un texto (lo filtra AWS, distingue mayúsculas)."""
+    if contiene:
+        return _describir_filtro(ssm, [{"Key": "Name", "Option": "Contains", "Values": [contiene]}])
     if nombres is not None:
         out = {}
         # El filtro Name admite hasta 50 valores
@@ -170,11 +173,34 @@ def etiquetas(ssm, nombres):
         return dict(pool.map(una, nombres))
 
 
+def _uno(ssm, nombre):
+    """Lo escrito en «Ruta» es un parámetro, no una carpeta (o uno sin «/», que no está en
+    ninguna): (meta, valores) o None si no existe."""
+    try:
+        meta = describir(ssm, "", nombres=[nombre])
+    except ClientError as exc:
+        if not denegado(exc):
+            raise ParametrosError(motivo(exc)) from None
+        meta = None
+    try:
+        valores = valores_por_nombre(ssm, [nombre])
+    except ClientError as exc:
+        raise ParametrosError(motivo(exc)) from None
+    if not meta and valores.get(nombre, {}).get("no_existe"):
+        return None
+    return meta, valores
+
+
 def cargar(ssm, ruta):
     """Los parámetros de una ruta (recursivo) con valor, metadatos y etiquetas. Lo que el rol no
-    puede leer va con `bloqueado`. ParametrosError si no puede ni listar ni leer la ruta."""
-    ruta = "/" + ruta.strip("/") if ruta.strip("/") else "/"
+    puede leer va con `bloqueado`. ParametrosError si no puede ni listar ni leer la ruta. Si la
+    ruta es el nombre de un parámetro (o uno sin «/»), carga ese."""
     avisos = []
+    if not ruta.strip().startswith("/"):  # parámetro sin carpeta (p. ej. «MiParametro»)
+        nombre = ruta.strip()
+        meta, valores = _uno(ssm, nombre) or ({}, {})
+        return _montar(ssm, nombre, meta, valores, avisos)
+    ruta = "/" + ruta.strip("/") if ruta.strip("/") else "/"
     try:
         meta = describir(ssm, ruta)
     except ClientError as exc:
@@ -200,6 +226,14 @@ def cargar(ssm, ruta):
         # La ruta entera no se deja (o un descifrado tumba la página): uno a uno
         valores = valores_por_nombre(ssm, sorted(meta))
 
+    if not meta and not valores and ruta != "/":  # nada debajo: ¿es el nombre de un parámetro?
+        uno = _uno(ssm, ruta)
+        if uno:
+            meta, valores = uno
+    return _montar(ssm, ruta, meta, valores, avisos)
+
+
+def _montar(ssm, ruta, meta, valores, avisos):
     nombres = sorted(n for n in set(meta or {}) | set(valores)
                      if not valores.get(n, {}).get("no_existe"))
     legibles = [n for n in nombres if "bloqueado" not in valores.get(n, {})]
@@ -221,10 +255,11 @@ def cargar(ssm, ruta):
     return {"ruta": ruta, "parametros": parametros, "avisos": avisos}
 
 
-def explorar(ssm, prefijo="/"):
-    """Nombres (sin valores) para el árbol de «Explorar» y la búsqueda de Ajustes."""
+def explorar(ssm, prefijo="/", contiene=""):
+    """Nombres (sin valores) para el árbol de «Explorar» y la búsqueda de Ajustes. Con `contiene`,
+    solo los que llevan ese texto: así se encuentran también cuando hay más de MAX_LISTADO."""
     try:
-        meta = describir(ssm, prefijo or "/")
+        meta = describir(ssm, prefijo or "/", contiene=contiene)
     except ClientError as exc:
         raise ParametrosError(
             "Tu rol de IAM no puede listar parámetros (ssm:DescribeParameters)."

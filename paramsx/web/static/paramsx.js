@@ -55,7 +55,7 @@
   PX.oyentes.push(st => {
     const donde = st.config ? `${st.config.profile_name}|${st.config.region_name}` : '';
     if (donde !== S.donde) {  // otro perfil o región: lo cargado era de otra cuenta
-      S.donde = donde; S.items = []; S.carpetas = null; S.ruta = ''; $('pBarra').hidden = true; $('pLista').innerHTML = '';
+      S.donde = donde; S.items = []; S.carpetas = null; B.enAws = null; S.ruta = ''; $('pBarra').hidden = true; $('pLista').innerHTML = '';
       $('pEstado').textContent = '';
       pintarDonde();
     }
@@ -90,6 +90,7 @@
     B.pidiendo = B.pidiendo || api('/api/explorar').then(r => {
       const c = {};
       r.nombres.forEach(n => { const seg = n.split('/').filter(Boolean); for (let i = 1; i < seg.length; i++) { const k = '/' + seg.slice(0, i).join('/'); c[k] = (c[k] || 0) + 1; } });
+      S.nombres = new Set(r.nombres); S.limitado = r.limitado;  // los parámetros también se buscan, no solo las carpetas
       S.carpetas = c; return c;
     }).finally(() => { B.pidiendo = null; });
     return B.pidiendo;
@@ -111,11 +112,32 @@
     try { c = await carpetas(); } catch (e) { caja.innerHTML = `<div class="sug-ayuda error">${esc(e.message)}</div>`; return; }
     if ($('pRuta').value.trim().toLowerCase() !== q) return;  // ya se ha escrito otra cosa
     // Primero las que empiezan por lo escrito, luego las más cortas
-    B.lista = Object.keys(c).filter(k => k.toLowerCase().includes(q))
-      .sort((a, b) => (b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q)) || a.split('/').length - b.split('/').length || a.localeCompare(b)).slice(0, 200);
-    caja.innerHTML = B.lista.map((k, i) => `<div class="sug" role="option" data-i="${i}"><code>${resaltar(k, q)}</code><span class="exp-n">${c[k]}</span><button type="button" class="secundario sug-grupo" data-grupo-de="${esc(k)}" title="Guardar esta carpeta como grupo (se detecta dónde va el entorno)" tabindex="-1">+ Grupo</button></div>`).join('')
-      + `<div class="sug-ayuda">${B.lista.length ? '<kbd>↑</kbd> <kbd>↓</kbd> para elegir · «+ Grupo» la guarda en tus grupos · ' : 'Ninguna carpeta con eso. '}<kbd>Intro</kbd> carga ${B.lista.length ? 'la elegida' : 'la ruta tal cual'}${q.startsWith('/') ? '' : ' (las rutas empiezan por /)'}</div>`;
+    if (S.limitado && q.length >= 2 && !B.enAws?.has(q)) buscarEnAws(q);
+    const orden = (a, b) => (b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q)) || a.split('/').length - b.split('/').length || a.localeCompare(b);
+    const dirs = Object.keys(c).filter(k => k.toLowerCase().includes(q)).sort(orden).slice(0, 200);
+    const params = [...(S.nombres || [])].filter(n => !c[n] && n.toLowerCase().includes(q)).sort(orden).slice(0, 100);  // los parámetros mismos, después
+    B.lista = [...dirs, ...params];
+    caja.innerHTML = B.lista.map((k, i) => i < dirs.length
+      ? `<div class="sug" role="option" data-i="${i}"><code>${resaltar(k, q)}</code><span class="exp-n">${c[k]}</span><button type="button" class="secundario sug-grupo" data-grupo-de="${esc(k)}" title="Guardar esta carpeta como grupo (se detecta dónde va el entorno)" tabindex="-1">+ Grupo</button></div>`
+      : `<div class="sug sug-param" role="option" data-i="${i}" title="Parámetro: se carga solo este"><code>${resaltar(k, q)}</code><span class="exp-n">parámetro</span></div>`).join('')
+      + `<div class="sug-ayuda">${B.enAws?.get(q) === 'buscando' ? 'Buscando también en AWS… · ' : ''}${B.lista.length ? '<kbd>↑</kbd> <kbd>↓</kbd> para elegir · «+ Grupo» la guarda en tus grupos · ' : 'Ninguna carpeta ni parámetro con eso. '}<kbd>Intro</kbd> carga ${B.lista.length ? 'la elegida' : 'la ruta tal cual'}${q.startsWith('/') ? '' : ' (las rutas empiezan por /)'}</div>`;
     marcarActiva(B.lista.length && !q.startsWith('/') ? 0 : -1);
+  }
+  // Con más parámetros de los que caben en la lista, lo escrito se pide a AWS (distingue mayúsculas: tal cual, en minúsculas y en mayúsculas)
+  function buscarEnAws(q) {
+    B.enAws = B.enAws || new Map(); B.enAws.set(q, 'buscando');
+    clearTimeout(B.espera);
+    B.espera = setTimeout(async () => {
+      try {
+        const vistas = await Promise.all([...new Set([q, q.toLowerCase(), q.toUpperCase()])].map(t => api('/api/explorar?contiene=' + encodeURIComponent(t))));
+        vistas.forEach(v => v.nombres.forEach(n => {
+          if (S.nombres.has(n)) return; S.nombres.add(n);
+          const seg = n.split('/').filter(Boolean); for (let i = 1; i < seg.length; i++) { const k = '/' + seg.slice(0, i).join('/'); S.carpetas[k] = (S.carpetas[k] || 0) + 1; }
+        }));
+        B.enAws.set(q, 'hecho');
+      } catch (e) { B.enAws.delete(q); toast(e.message, true); }
+      if ($('pRuta').value.trim().toLowerCase() === q) sugerir();
+    }, 400);
   }
   // «+ Grupo»: guarda la carpeta en la config detectando dónde va el entorno (lo mismo que Explorar y Ajustes)
   async function anadirGrupo(carpeta) {
@@ -155,7 +177,7 @@
   // ------------------------------------------------ cargar y pintar
   async function cargar() {
     const ruta = $('pRuta').value.trim();
-    if (!ruta.startsWith('/')) return toast('La ruta empieza por /', true);
+    if (!ruta) return toast('Escribe una ruta o el nombre de un parámetro', true);
     $('pEstado').textContent = `Leyendo ${ruta} de AWS…`; $('pLista').innerHTML = ''; $('pBarra').hidden = true;
     try {
       const r = await post('/api/cargar', { ruta });
@@ -365,7 +387,7 @@
         const hechos = new Set(res.resultados.filter(x => x.ok).map(x => x.name));
         const sinHacer = pendientes().filter(p => !hechos.has(nombreEnvio(p))).map(p => ({ ...p, name: nombreEnvio(p) }));
         const conflictos = new Set([...r.plan.filter(f => f.conflicto).map(f => f.name), ...mal.filter(x => /^Conflicto/.test(x.error)).map(x => x.name)]);
-        S.items = []; S.carpetas = null;
+        S.items = []; S.carpetas = null; B.enAws = null;
         await cargar();
         if (sinHacer.length && S.ruta) { reponer(S.items, sinHacer, conflictos); pintar(); }
         toast(mal.length ? `${ok} aplicados, ${mal.length} con error` : `${ok} cambios aplicados`, !!mal.length);
@@ -500,28 +522,46 @@
     modal.abrir('<h2>Explorar</h2><p>Leyendo los nombres (sin valores)…</p>');
     let r;
     try { r = await api('/api/explorar'); } catch (e) { return modal.abrir(`<h2>Explorar</h2><p class="error">${esc(e.message)}</p>`); }
+    const nombres = new Set(r.nombres);  // con más de los que caben, lo que se filtra se pide también a AWS y se añade aquí
     const arbol = q => {
       const raiz = {};
-      r.nombres.filter(n => !q || n.toLowerCase().includes(q)).forEach(n => {
+      [...nombres].filter(n => !q || n.toLowerCase().includes(q)).forEach(n => {
+        const seg = n.split('/').filter(Boolean);
+        if (seg.length === 1) { raiz[n] = raiz[n] || { _n: 1, _hoja: n }; return; }  // sin carpeta: el parámetro mismo
         let nodo = raiz;
-        n.split('/').filter(Boolean).slice(0, -1).forEach(x => { nodo[x] = nodo[x] || { _n: 0 }; nodo[x]._n++; nodo = nodo[x]; });
+        seg.slice(0, -1).forEach(x => { nodo[x] = nodo[x] || { _n: 0 }; nodo[x]._n++; nodo = nodo[x]; });
       });
       return raiz;
     };
-    const fila = (k, ruta, n, nivel) => {
+    const fila = (k, ruta, n, nivel, hoja) => {
       const e = entornoDe(k);
       return `<span class="exp-nombre nivel-${Math.min(nivel, 3)}${e ? ' entorno ' + claseEntorno(e) : ''}">${esc(k)}</span><span class="exp-n" title="Parámetros por debajo">${n}</span>
-        <span class="exp-acciones"><button type="button" class="secundario" data-ruta="${esc(ruta)}">Cargar</button><button type="button" class="secundario" data-grupo-de="${esc(ruta)}" title="Guardar esta carpeta como grupo (se detecta dónde va el entorno)">+ Grupo</button></span>`;
+        <span class="exp-acciones"><button type="button" class="secundario" data-ruta="${esc(ruta)}">Cargar</button>${hoja ? '' : `<button type="button" class="secundario" data-grupo-de="${esc(ruta)}" title="Guardar esta carpeta como grupo (se detecta dónde va el entorno)">+ Grupo</button>`}</span>`;
     };
-    const rama = (nodo, ruta, nivel, abierto) => Object.keys(nodo).filter(k => k !== '_n').sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })).map(k => {
-      const r2 = `${ruta}/${k}`, hijos = rama(nodo[k], r2, nivel + 1, abierto);
-      return hijos ? `<details class="rama" ${abierto ? 'open' : ''}><summary class="exp-fila">${fila(k, r2, nodo[k]._n, nivel)}</summary><div class="hijos">${hijos}</div></details>`
-        : `<div class="exp-fila exp-hoja">${fila(k, r2, nodo[k]._n, nivel)}</div>`;
+    const rama = (nodo, ruta, nivel, abierto) => Object.keys(nodo).filter(k => k !== '_n' && k !== '_hoja').sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })).map(k => {
+      const r2 = nodo[k]._hoja || `${ruta}/${k}`, hijos = rama(nodo[k], r2, nivel + 1, abierto);
+      return hijos ? `<details class="rama" ${abierto ? 'open' : ''}><summary class="exp-fila">${fila(k, r2, nodo[k]._n, nivel, nodo[k]._hoja)}</summary><div class="hijos">${hijos}</div></details>`
+        : `<div class="exp-fila exp-hoja">${fila(k, r2, nodo[k]._n, nivel, nodo[k]._hoja)}</div>`;
     }).join('');
-    modal.abrir(`<h2>Explorar · ${r.nombres.length} parámetros</h2><p>Solo nombres. «Cargar» abre la carpeta; «+ Grupo» la guarda en tu configuración para elegirla luego con su entorno.${r.limitado ? ' <span class="warn">Hay más de los que se muestran: filtra.</span>' : ''}</p>
+    modal.abrir(`<h2>Explorar · ${r.nombres.length} parámetros</h2><p>Solo nombres. «Cargar» abre la carpeta; «+ Grupo» la guarda en tu configuración para elegirla luego con su entorno.${r.limitado ? ' <span class="warn">Hay más de los que se muestran: al filtrar se buscan también en AWS.</span>' : ''}</p>
       <div class="exp-cab"><input type="search" id="pExpFiltro" placeholder="Filtrar rutas… (p. ej. rds, api)" ${NOFILL}><span class="leyenda">${cfg().entornos.map(e => `<span class="entorno ${claseEntorno(e)}">${esc(e)}</span>`).join('')}</span></div>
       <div class="arbol" id="pArbol">${rama(arbol(''), '', 0, false) || '<p class="muted">No hay parámetros.</p>'}</div>`);
-    $('pExpFiltro').addEventListener('input', e => { const q = e.target.value.trim().toLowerCase(); $('pArbol').innerHTML = rama(arbol(q), '', 0, !!q) || '<p class="muted">Ninguna ruta con eso.</p>'; });
+    let buscando = false, espera;
+    const pintarArbol = () => { const q = $('pExpFiltro').value.trim().toLowerCase(); $('pArbol').innerHTML = rama(arbol(q), '', 0, !!q) || `<p class="muted">${buscando ? 'Buscando en AWS…' : 'Ninguna ruta con eso.'}</p>`; };
+    $('pExpFiltro').addEventListener('input', () => {
+      pintarArbol();
+      const q = $('pExpFiltro').value.trim();
+      clearTimeout(espera);
+      if (!r.limitado || q.length < 2) return;
+      buscando = true; pintarArbol();
+      espera = setTimeout(async () => {  // AWS distingue mayúsculas: tal cual, en minúsculas y en mayúsculas
+        try {
+          const vistas = await Promise.all([...new Set([q, q.toLowerCase(), q.toUpperCase()])].map(t => api('/api/explorar?contiene=' + encodeURIComponent(t))));
+          vistas.forEach(v => v.nombres.forEach(n => nombres.add(n)));
+        } catch (e) { toast(e.message, true); }
+        buscando = false; if ($('pExpFiltro')?.value.trim() === q) pintarArbol();
+      }, 400);
+    });
     $('pExpFiltro').focus();
     $('pArbol').addEventListener('click', async e => {
       const g = e.target.closest('[data-grupo-de]');

@@ -472,3 +472,22 @@ def test_js_reponer_lo_no_aplicado(tmp_path):
     assert por["/r/d"]["borrar"] is True
     # Lo que ya no está en AWS no se inventa
     assert "/r/ya-no-esta" not in por and len(out) == 6
+
+
+# ---------------------------------------------------------------- buscar un parámetro
+
+def test_en_ruta_vale_el_nombre_de_un_parametro_o_uno_sin_carpeta(cliente, ssm):
+    ssm.poner("/dev/app/clave", "x1")
+    ssm.poner("SinCarpeta", "raiz", tipo="String")
+    assert list(cargar(cliente, "/dev/app/clave")) == ["/dev/app/clave"]  # el nombre completo, no su carpeta
+    assert cargar(cliente, "/dev/app/clave")["/dev/app/clave"]["value"] == "x1"
+    assert cargar(cliente, "SinCarpeta")["SinCarpeta"]["value"] == "raiz"
+    assert cargar(cliente, "/dev/no/existe") == {}
+    assert cargar(cliente, "NoExiste") == {}
+
+
+def test_explorar_busca_en_aws_lo_que_no_cabe_en_la_lista(cliente, ssm):
+    ssm.poner("/dev/app/clave", "x1")
+    ssm.poner("/prod/otra/Cosa", "x2")
+    r = cliente.get("/api/explorar?contiene=Cosa").get_json()
+    assert r["nombres"] == ["/prod/otra/Cosa"]

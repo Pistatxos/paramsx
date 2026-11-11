@@ -78,6 +78,8 @@ class FakeSSM:
             if f["Key"] == "Path":
                 base = f["Values"][0].rstrip("/") + "/"
                 nombres = [n for n in nombres if n.startswith(base)]
+            elif f["Key"] == "Name" and f.get("Option") == "Contains":  # como AWS: distingue mayúsculas
+                nombres = [n for n in nombres if f["Values"][0] in n]
             elif f["Key"] == "Name":
                 nombres = [n for n in nombres if n in f["Values"]]
         inicio = int(kw.get("NextToken") or 0)

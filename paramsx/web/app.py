@@ -354,13 +354,14 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
 
     @app.get("/api/explorar")
     def api_explorar():
-        return jsonify(ssm_web.explorar(ssm(), request.args.get("prefijo") or "/"))
+        return jsonify(ssm_web.explorar(ssm(), request.args.get("prefijo") or "/",
+                                        str(request.args.get("contiene") or "")[:200]))
 
     @app.post("/api/cargar")
     def api_cargar():
         ruta = str(cuerpo().get("ruta") or "").strip()
-        if not ruta.startswith("/"):
-            raise ErrorWeb("La ruta empieza por /.")
+        if not ruta:
+            raise ErrorWeb("Escribe una ruta (o el nombre de un parámetro).")
         return jsonify(ssm_web.cargar(ssm(), ruta))
 
     @app.post("/api/plan")
