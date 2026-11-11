@@ -288,3 +288,21 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .reemplazar-antes { background: var(--rojo-fondo); color: var(--rojo); text-decoration: line-through; margin-bottom: 3px; }
 .reemplazar-despues { background: var(--ok-fondo); color: var(--ok); }
 @media (max-width: 640px) { .reemplazar { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------------- vista Listado y copiar el nombre */
+.selector-vista { display: inline-flex; border: 1px solid var(--borde); border-radius: 8px; overflow: hidden; flex: none; }
+.selector-vista button { border: 0; background: #fff; color: var(--suave); font-size: 12px; font-weight: 650; padding: 7px 11px; cursor: pointer; }
+.selector-vista button + button { border-left: 1px solid var(--borde); }
+.selector-vista button[aria-pressed="true"] { background: var(--tinta); color: #fff; }
+.param > header .nombre:has(+ .copiar) { flex: 0 1 auto; }
+.copiar { border: 0; background: none; color: var(--tenue); font-size: 14px; line-height: 1; padding: 3px 5px; border-radius: 5px; cursor: pointer; margin: 0 auto 0 -6px; }
+.copiar:hover { background: var(--borde); color: var(--tinta); }
+.param > header:has(.copiar) .param-acciones { margin-left: 0; }
+.plegar { display: none; border: 0; background: none; color: var(--suave); font-size: 15px; width: 22px; height: 22px; padding: 0; border-radius: 5px; cursor: pointer; transition: transform .15s; flex: none; }
+.plegar:hover { background: var(--borde); }
+.modo-listado { gap: 6px; }
+.modo-listado .plegar { display: inline-flex; align-items: center; justify-content: center; }
+.modo-listado .param.abierta .plegar { transform: rotate(90deg); }
+.modo-listado .param:not(.abierta):not(.nuevo) > :not(header) { display: none; }
+.modo-listado .param:not(.abierta):not(.nuevo) > header { border-bottom: 0; padding-top: 7px; padding-bottom: 7px; }
+.modo-listado .nombre { cursor: pointer; }

@@ -185,7 +185,7 @@
       S.ruta = r.ruta;
       S.items = r.parametros.map(p => ({ ...p, tags: p.tags ? { ...p.tags } : null, orig: { ...p, tags: p.tags ? { ...p.tags } : null }, borrar: false, nuevo: false, ver: false }));
       const bloqueados = S.items.filter(p => p.bloqueado).length;
-      $('pEstado').innerHTML = `<b>${esc(r.ruta)}</b> · ${S.items.length} par${bloqueados ? ` · 🔒 ${bloqueados} sin permiso` : ''}${r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('')} · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>`;
+      $('pEstado').innerHTML = `${r.buscado ? `Buscado <b>«${esc(r.buscado)}»</b> · ${S.items.length} ${S.items.length === 1 ? 'parámetro lo lleva' : 'parámetros lo llevan'} en el nombre` : `<b>${esc(r.ruta)}</b> · ${S.items.length} par`}${bloqueados ? ` · 🔒 ${bloqueados} sin permiso` : ''}${r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('')} · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>`;
       $('pBarra').hidden = false; pintar();
     } catch (e) {
       $('pEstado').innerHTML = `<span class="error">${esc(e.message)}</span>`; S.items = []; S.ruta = '';
@@ -215,11 +215,11 @@
     const tags = p.tags || {};
     const claves = [...new Set([...obligatorias(), ...Object.keys(tags)])];
     const lineas = (p.value || '').split('\n').length;
-    const cabecera = `<header>${p.nuevo ? `<input class="nombre-input" data-campo="name" value="${esc(p.name)}" placeholder="/ruta/nombre" ${NOFILL}>` : `<code class="nombre" title="${esc(p.name)}">${esc(p.name)}</code>`}
+    const cabecera = `<header><button type="button" class="plegar" data-plegar aria-expanded="${!!p.abierta}" title="Ver su información">▸</button>${p.nuevo ? `<input class="nombre-input" data-campo="name" value="${esc(p.name)}" placeholder="/ruta/nombre" ${NOFILL}>` : `<code class="nombre" title="${esc(p.name)}">${esc(p.name)}</code><button type="button" class="copiar" data-copiar title="Copiar el nombre" aria-label="Copiar el nombre">⧉</button>`}
       <span class="chips">${p.nuevo ? '<span class="chip nuevo">nuevo</span>' : ''}${p.bloqueado ? '<span class="chip">🔒 solo lectura</span>' : ''}${p.version ? `<span class="chip" title="Versión en AWS">v${p.version}</span>` : ''}${p.tier === 'Advanced' ? '<span class="chip" title="Tier Advanced (de pago)">Advanced</span>' : ''}${p.kms_propia ? '<span class="chip" title="Cifrado con una clave KMS propia (se conserva al guardar)">KMS propia</span>' : ''}${p.modified ? `<span class="chip" title="Último cambio">${cuando(p.modified)}${p.user ? ' · ' + esc(quien(p.user)) : ''}</span>` : ''}<span class="cambios"></span></span>
       <span class="param-acciones">${!p.nuevo && !p.bloqueado ? '<button type="button" class="enlace" data-historial>Historial</button>' : ''}${!p.bloqueado ? `<button type="button" class="enlace ${p.borrar ? '' : 'peligro'}" data-borrar>${p.borrar ? 'No borrar' : p.nuevo ? 'Quitar' : 'Borrar'}</button>` : ''}</span></header>`;
-    if (p.bloqueado) return `<article class="param bloqueado" data-i="${i}">${cabecera}<p class="bloqueado-motivo">🔒 ${esc(p.bloqueado)}</p></article>`;
-    return `<article class="param${p.borrar ? ' borrado' : ''}${p.nuevo ? ' nuevo' : ''}" data-i="${i}">${cabecera}
+    if (p.bloqueado) return `<article class="param bloqueado${p.abierta ? ' abierta' : ''}" data-i="${i}">${cabecera}<p class="bloqueado-motivo">🔒 ${esc(p.bloqueado)}</p></article>`;
+    return `<article class="param${p.borrar ? ' borrado' : ''}${p.nuevo ? ' nuevo' : ''}${p.abierta ? ' abierta' : ''}" data-i="${i}">${cabecera}
       <div class="param-cuerpo"><div class="param-campos">
         <div class="fila-desc">
           <label class="campo">Descripción<input data-campo="description" value="${esc(p.description || '')}" maxlength="1024" ${NOFILL} ${ro || p.descripcion_legible === false ? 'disabled' : ''} ${p.descripcion_legible === false ? 'title="Tu rol no puede leer las descripciones (ssm:DescribeParameters)"' : ''}></label>
@@ -258,6 +258,20 @@
     });
   }
   $('pFiltro').addEventListener('input', filtrar);
+  // Vista: Tarjetas (la de siempre) o Listado (una línea por parámetro: nombre, copiarlo y ▸ para ver su información)
+  let vista = 'tarjetas';
+  try { if (localStorage.getItem('paramsx_vista') === 'listado') vista = 'listado'; } catch { /* sin almacenamiento */ }
+  const listado = () => vista === 'listado';
+  const aplicarVista = () => {
+    $('pLista').classList.toggle('modo-listado', listado());
+    $('pVista').querySelectorAll('[data-vista]').forEach(b => b.setAttribute('aria-pressed', b.dataset.vista === vista));
+  };
+  aplicarVista();
+  $('pVista').addEventListener('click', e => {
+    const b = e.target.closest('[data-vista]'); if (!b) return;
+    vista = b.dataset.vista; aplicarVista();
+    try { localStorage.setItem('paramsx_vista', vista); } catch { /* sin almacenamiento */ }
+  });
   $('pMostrar').addEventListener('change', pintar);
 
   // ------------------------------------------------ edición (sin repintar la tarjeta: no se pierde el foco)
@@ -312,6 +326,12 @@
   $('pLista').addEventListener('click', e => {
     const card = e.target.closest('.param'); if (!card) return;
     const i = +card.dataset.i, p = S.items[i];
+    if (e.target.closest('[data-copiar]')) return navigator.clipboard.writeText(p.name).then(() => toast('Nombre copiado'), () => toast('No se pudo copiar', true));
+    // Listado: ▸ (o el nombre) despliega su información
+    if (e.target.closest('[data-plegar]') || (listado() && e.target.closest('.nombre'))) {
+      p.abierta = !p.abierta; card.classList.toggle('abierta', p.abierta);
+      return card.querySelector('[data-plegar]').setAttribute('aria-expanded', p.abierta);
+    }
     if (e.target.closest('[data-ver]')) { p.ver = !p.ver; return repintarUna(i); }
     if (e.target.closest('[data-formatear]')) { try { p.value = JSON.stringify(JSON.parse(p.value), null, 2); } catch { /* no es JSON */ } return repintarUna(i); }
     if (e.target.closest('[data-tag-nueva]')) {

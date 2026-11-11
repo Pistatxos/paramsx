@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.4
+
+### Añadido
+
+- **Vista Listado** en la barra (botones «▦ Tarjetas | ☰ Listado»; Tarjetas sigue siendo la de siempre): una línea por parámetro con su nombre, **⧉ para copiar el nombre** y **▸ para desplegar su información** (la tarjeta de siempre, editable). Se recuerda la vista elegida. El ⧉ sale también en Tarjetas.
+
+### Corregido
+
+- Al buscar por un trozo del nombre, la línea de estado dice **«Buscado «…» · N parámetros lo llevan en el nombre»**, en vez del confuso «No hay nada en …» en rojo.
+
 ## 2.5.3
 
 ### Corregido

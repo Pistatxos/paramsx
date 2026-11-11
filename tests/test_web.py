@@ -493,7 +493,7 @@ def test_si_la_ruta_no_existe_busca_los_que_la_llevan_en_el_nombre(cliente, ssm)
     r = cliente.post("/api/cargar", json={"ruta": "common/rds/multiAPI"}).get_json()  # sin barra ni entorno
     assert [p["name"] for p in r["parametros"]] == ["/dev/common/rds/multiAPI", "/prod/common/rds/multiAPI"]
     assert [p["value"] for p in r["parametros"]] == ["d", "p"]
-    assert "llevan «common/rds/multiAPI» en el nombre" in r["avisos"][0]
+    assert (r["buscado"], r["avisos"]) == ("common/rds/multiAPI", [])
 
 
 def test_explorar_busca_en_aws_lo_que_no_cabe_en_la_lista(cliente, ssm):

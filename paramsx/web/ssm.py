@@ -239,6 +239,8 @@ def cargar(ssm, ruta):
             meta, valores, aviso = _contienen(ssm, ruta[1:])
             if aviso:
                 avisos.append(aviso)
+            if meta:  # para que la pantalla diga «Buscado …» en vez de la ruta
+                return {**_montar(ssm, ruta, meta, valores, avisos), "buscado": ruta[1:]}
     return _montar(ssm, ruta, meta, valores, avisos)
 
 
@@ -258,8 +260,8 @@ def _contienen(ssm, texto):
         valores = valores_por_nombre(ssm, nombres)
     except ClientError as exc:
         raise ParametrosError(motivo(exc)) from None
-    mas = f" (se muestran los {MAX_CONTIENEN} primeros: acota)" if len(nombres) >= MAX_CONTIENEN else ""
-    return meta, valores, f"No hay nada en /{texto}: son los que llevan «{texto}» en el nombre{mas}."
+    aviso = f"Hay más: se muestran los {MAX_CONTIENEN} primeros, acota." if len(nombres) >= MAX_CONTIENEN else ""
+    return meta, valores, aviso
 
 
 def _montar(ssm, ruta, meta, valores, avisos):
