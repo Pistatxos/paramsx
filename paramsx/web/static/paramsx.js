@@ -120,7 +120,7 @@
     caja.innerHTML = B.lista.map((k, i) => i < dirs.length
       ? `<div class="sug" role="option" data-i="${i}"><code>${resaltar(k, q)}</code><span class="exp-n">${c[k]}</span><button type="button" class="secundario sug-grupo" data-grupo-de="${esc(k)}" title="Guardar esta carpeta como grupo (se detecta dónde va el entorno)" tabindex="-1">+ Grupo</button></div>`
       : `<div class="sug sug-param" role="option" data-i="${i}" title="Parámetro: se carga solo este"><code>${resaltar(k, q)}</code><span class="exp-n">parámetro</span></div>`).join('')
-      + `<div class="sug-ayuda">${B.enAws?.get(q) === 'buscando' ? 'Buscando también en AWS… · ' : ''}${B.lista.length ? '<kbd>↑</kbd> <kbd>↓</kbd> para elegir · «+ Grupo» la guarda en tus grupos · ' : 'Ninguna carpeta ni parámetro con eso. '}<kbd>Intro</kbd> carga ${B.lista.length ? 'la elegida' : 'la ruta tal cual'}${q.startsWith('/') ? '' : ' (las rutas empiezan por /)'}</div>`;
+      + `<div class="sug-ayuda">${B.enAws?.get(q) === 'buscando' ? 'Buscando también en AWS… · ' : ''}${B.lista.length ? '<kbd>↑</kbd> <kbd>↓</kbd> para elegir · «+ Grupo» la guarda en tus grupos · ' : 'Ninguna carpeta ni parámetro con eso. '}<kbd>Intro</kbd> carga ${B.lista.length ? 'la elegida' : 'la ruta tal cual (si no existe, los que la llevan en el nombre)'}</div>`;
     marcarActiva(B.lista.length && !q.startsWith('/') ? 0 : -1);
   }
   // Con más parámetros de los que caben en la lista, lo escrito se pide a AWS (distingue mayúsculas: tal cual, en minúsculas y en mayúsculas)
@@ -176,8 +176,9 @@
 
   // ------------------------------------------------ cargar y pintar
   async function cargar() {
-    const ruta = $('pRuta').value.trim();
+    let ruta = $('pRuta').value.trim();
     if (!ruta) return toast('Escribe una ruta o el nombre de un parámetro', true);
+    if (!ruta.startsWith('/')) $('pRuta').value = ruta = '/' + ruta;  // la barra inicial, sola (uno sin carpeta también se encuentra así)
     $('pEstado').textContent = `Leyendo ${ruta} de AWS…`; $('pLista').innerHTML = ''; $('pBarra').hidden = true;
     try {
       const r = await post('/api/cargar', { ruta });

@@ -15,6 +15,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 TIPOS = ("String", "StringList", "SecureString")
 MAX_STANDARD, MAX_ADVANCED = 4096, 8192
 MAX_LISTADO = 2000  # parámetros como mucho por carga (el resto se avisa)
+MAX_CONTIENEN = 200  # al buscar por un trozo del nombre (cuando la ruta no existe)
 KMS_DEFECTO = ("alias/aws/ssm", "")
 NOMBRE = re.compile(r"^[A-Za-z0-9_.\-/]{1,2048}$")
 REINTENTOS_TOO_MANY_UPDATES = 2
@@ -188,19 +189,19 @@ def _uno(ssm, nombre):
         raise ParametrosError(motivo(exc)) from None
     if not meta and valores.get(nombre, {}).get("no_existe"):
         return None
+    if meta and len(meta) == 1 and nombre not in meta and nombre in valores:  # GetParameters repite el nombre tal como se pidió
+        valores = {next(iter(meta)): valores[nombre]}
     return meta, valores
 
 
 def cargar(ssm, ruta):
     """Los parámetros de una ruta (recursivo) con valor, metadatos y etiquetas. Lo que el rol no
-    puede leer va con `bloqueado`. ParametrosError si no puede ni listar ni leer la ruta. Si la
-    ruta es el nombre de un parámetro (o uno sin «/»), carga ese."""
+    puede leer va con `bloqueado`. ParametrosError si no puede ni listar ni leer la ruta. Si no hay
+    nada debajo de la ruta: el parámetro con ese nombre (también sin «/», p. ej. «MiParametro») y,
+    si tampoco, los que llevan ese texto en el nombre («/common/rds/x» encuentra
+    «/prod/common/rds/x», «/dev/common/rds/x»…)."""
+    ruta = "/" + ruta.strip().strip("/") if ruta.strip().strip("/") else "/"
     avisos = []
-    if not ruta.strip().startswith("/"):  # parámetro sin carpeta (p. ej. «MiParametro»)
-        nombre = ruta.strip()
-        meta, valores = _uno(ssm, nombre) or ({}, {})
-        return _montar(ssm, nombre, meta, valores, avisos)
-    ruta = "/" + ruta.strip("/") if ruta.strip("/") else "/"
     try:
         meta = describir(ssm, ruta)
     except ClientError as exc:
@@ -226,11 +227,39 @@ def cargar(ssm, ruta):
         # La ruta entera no se deja (o un descifrado tumba la página): uno a uno
         valores = valores_por_nombre(ssm, sorted(meta))
 
-    if not meta and not valores and ruta != "/":  # nada debajo: ¿es el nombre de un parámetro?
-        uno = _uno(ssm, ruta)
+    if not meta and not valores and ruta != "/":
+        # el nombre exacto; sin carpeta, AWS trata «/Nombre» y «Nombre» como el mismo: primero sin
+        # la barra (su nombre de verdad)
+        uno = ("/" not in ruta[1:] and _uno(ssm, ruta[1:])) or _uno(ssm, ruta)
         if uno:
             meta, valores = uno
+            if ruta not in (meta or valores):
+                ruta = ruta[1:]
+        else:
+            meta, valores, aviso = _contienen(ssm, ruta[1:])
+            if aviso:
+                avisos.append(aviso)
     return _montar(ssm, ruta, meta, valores, avisos)
+
+
+def _contienen(ssm, texto):
+    """(meta, valores, aviso) de los parámetros con `texto` en el nombre (como mucho MAX_CONTIENEN)."""
+    try:
+        meta = describir(ssm, "", contiene=texto)
+    except ClientError as exc:
+        if not denegado(exc):
+            raise ParametrosError(motivo(exc)) from None
+        return {}, {}, ""
+    if not meta:
+        return {}, {}, ""
+    nombres = sorted(meta)[:MAX_CONTIENEN]
+    meta = {n: meta[n] for n in nombres}
+    try:
+        valores = valores_por_nombre(ssm, nombres)
+    except ClientError as exc:
+        raise ParametrosError(motivo(exc)) from None
+    mas = f" (se muestran los {MAX_CONTIENEN} primeros: acota)" if len(nombres) >= MAX_CONTIENEN else ""
+    return meta, valores, f"No hay nada en /{texto}: son los que llevan «{texto}» en el nombre{mas}."
 
 
 def _montar(ssm, ruta, meta, valores, avisos):

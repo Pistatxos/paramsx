@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.3
+
+### Corregido
+
+- **Buscar sin el entorno**: si la ruta no existe, se cargan los parámetros que **la llevan en el nombre**. `/common/rds/multiAPI` encuentra `/prod/common/rds/multiAPI`, `/dev/common/rds/multiAPI`… (hasta 200).
+- La **barra inicial** de la ruta se pone sola.
+- Un parámetro sin carpeta ya no sale repetido al buscarlo con barra (`/Nombre`): AWS trata `/Nombre` y `Nombre` como el mismo.
+
 ## 2.5.2
 
 ### Corregido

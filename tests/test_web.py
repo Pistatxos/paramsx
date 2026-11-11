@@ -482,8 +482,18 @@ def test_en_ruta_vale_el_nombre_de_un_parametro_o_uno_sin_carpeta(cliente, ssm):
     assert list(cargar(cliente, "/dev/app/clave")) == ["/dev/app/clave"]  # el nombre completo, no su carpeta
     assert cargar(cliente, "/dev/app/clave")["/dev/app/clave"]["value"] == "x1"
     assert cargar(cliente, "SinCarpeta")["SinCarpeta"]["value"] == "raiz"
+    assert cargar(cliente, "/SinCarpeta")["SinCarpeta"]["value"] == "raiz"  # con la barra puesta sola
     assert cargar(cliente, "/dev/no/existe") == {}
     assert cargar(cliente, "NoExiste") == {}
+
+
+def test_si_la_ruta_no_existe_busca_los_que_la_llevan_en_el_nombre(cliente, ssm):
+    ssm.poner("/dev/common/rds/multiAPI", "d")
+    ssm.poner("/prod/common/rds/multiAPI", "p")
+    r = cliente.post("/api/cargar", json={"ruta": "common/rds/multiAPI"}).get_json()  # sin barra ni entorno
+    assert [p["name"] for p in r["parametros"]] == ["/dev/common/rds/multiAPI", "/prod/common/rds/multiAPI"]
+    assert [p["value"] for p in r["parametros"]] == ["d", "p"]
+    assert "llevan «common/rds/multiAPI» en el nombre" in r["avisos"][0]
 
 
 def test_explorar_busca_en_aws_lo_que_no_cabe_en_la_lista(cliente, ssm):
