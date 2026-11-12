@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.6
+
+### Añadido
+
+- **✎ Cambiar el nombre** de un parámetro, al lado de ⧉ (copiar). Como en SSM no se renombra, en el editor queda uno nuevo con el mismo valor, tipo, descripción y etiquetas y el viejo marcado para borrar; después, «Revisar cambios» como siempre. Si el nuevo no se puede crear, el viejo no se borra.
+
+### Cambiado
+
+- La vista por defecto es **Listado** (se recuerda si eliges Tarjetas).
+
 ## 2.5.5
 
 ### Corregido

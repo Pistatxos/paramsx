@@ -298,6 +298,9 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .copiar { border: 0; background: none; color: var(--tenue); font-size: 14px; line-height: 1; padding: 3px 5px; border-radius: 5px; cursor: pointer; margin: 0 auto 0 -6px; }
 .copiar:hover { background: var(--borde); color: var(--tinta); }
 .param > header:has(.copiar) .param-acciones { margin-left: 0; }
+.copiar.renombrar { margin-left: -10px; }
+.param > header .copiar:not(:last-of-type) { margin-right: 0; }
+.renombrar-campo input { font-family: var(--mono); }
 .plegar { display: none; border: 0; background: none; color: var(--suave); font-size: 15px; width: 22px; height: 22px; padding: 0; border-radius: 5px; cursor: pointer; transition: transform .15s; flex: none; }
 .plegar:hover { background: var(--borde); }
 .modo-listado { gap: 6px; }

@@ -215,7 +215,7 @@
     const tags = p.tags || {};
     const claves = [...new Set([...obligatorias(), ...Object.keys(tags)])];
     const lineas = (p.value || '').split('\n').length;
-    const cabecera = `<header><button type="button" class="plegar" data-plegar aria-expanded="${!!p.abierta}" title="Ver su información">▸</button>${p.nuevo ? `<input class="nombre-input" data-campo="name" value="${esc(p.name)}" placeholder="/ruta/nombre" ${NOFILL}>` : `<code class="nombre" title="${esc(p.name)}">${esc(p.name)}</code><button type="button" class="copiar" data-copiar title="Copiar el nombre" aria-label="Copiar el nombre">⧉</button>`}
+    const cabecera = `<header><button type="button" class="plegar" data-plegar aria-expanded="${!!p.abierta}" title="Ver su información">▸</button>${p.nuevo ? `<input class="nombre-input" data-campo="name" value="${esc(p.name)}" placeholder="/ruta/nombre" ${NOFILL}>` : `<code class="nombre" title="${esc(p.name)}">${esc(p.name)}</code><button type="button" class="copiar" data-copiar title="Copiar el nombre" aria-label="Copiar el nombre">⧉</button>${!p.bloqueado && !p.borrar ? '<button type="button" class="copiar renombrar" data-renombrar title="Cambiar el nombre (en SSM: se crea uno nuevo y se borra este)" aria-label="Cambiar el nombre">✎</button>' : ''}`}
       <span class="chips">${p.nuevo ? '<span class="chip nuevo">nuevo</span>' : ''}${p.bloqueado ? '<span class="chip">🔒 solo lectura</span>' : ''}${p.version ? `<span class="chip" title="Versión en AWS">v${p.version}</span>` : ''}${p.tier === 'Advanced' ? '<span class="chip" title="Tier Advanced (de pago)">Advanced</span>' : ''}${p.kms_propia ? '<span class="chip" title="Cifrado con una clave KMS propia (se conserva al guardar)">KMS propia</span>' : ''}${p.modified ? `<span class="chip" title="Último cambio">${cuando(p.modified)}${p.user ? ' · ' + esc(quien(p.user)) : ''}</span>` : ''}<span class="cambios"></span></span>
       <span class="param-acciones">${!p.nuevo && !p.bloqueado ? '<button type="button" class="enlace" data-historial>Historial</button>' : ''}${!p.bloqueado ? `<button type="button" class="enlace ${p.borrar ? '' : 'peligro'}" data-borrar>${p.borrar ? 'No borrar' : p.nuevo ? 'Quitar' : 'Borrar'}</button>` : ''}</span></header>`;
     if (p.bloqueado) return `<article class="param bloqueado${p.abierta ? ' abierta' : ''}" data-i="${i}">${cabecera}<p class="bloqueado-motivo">🔒 ${esc(p.bloqueado)}</p></article>`;
@@ -258,9 +258,9 @@
     });
   }
   $('pFiltro').addEventListener('input', filtrar);
-  // Vista: Tarjetas (la de siempre) o Listado (una línea por parámetro: nombre, copiarlo y ▸ para ver su información)
-  let vista = 'tarjetas';
-  try { if (localStorage.getItem('paramsx_vista') === 'listado') vista = 'listado'; } catch { /* sin almacenamiento */ }
+  // Vista: Listado (por defecto) o Tarjetas (una línea por parámetro: nombre, copiarlo y ▸ para ver su información)
+  let vista = 'listado';  // por defecto, el listado
+  try { if (localStorage.getItem('paramsx_vista') === 'tarjetas') vista = 'tarjetas'; } catch { /* sin almacenamiento */ }
   const listado = () => vista === 'listado';
   const aplicarVista = () => {
     $('pLista').classList.toggle('modo-listado', listado());
@@ -326,6 +326,7 @@
   $('pLista').addEventListener('click', e => {
     const card = e.target.closest('.param'); if (!card) return;
     const i = +card.dataset.i, p = S.items[i];
+    if (e.target.closest('[data-renombrar]')) return pedirNombre(i);
     if (e.target.closest('[data-copiar]')) return navigator.clipboard.writeText(p.name).then(() => toast('Nombre copiado'), () => toast('No se pudo copiar', true));
     // Listado: ▸ (o el nombre) despliega su información
     if (e.target.closest('[data-plegar]') || (listado() && e.target.closest('.nombre'))) {
@@ -429,6 +430,36 @@
     return items;
   }
 
+  // ------------------------------------------------ cambiar el nombre (✎): en SSM no se renombra; se crea otro con lo mismo y se borra el viejo
+  // Devuelve el motivo si no se puede ('' si se ha puesto en el editor). El nuevo va justo debajo del que sustituye.
+  function renombrar(i, nombre) {
+    const p = S.items[i], nuevo = sinBarraFinal(nombre);
+    if (!nuevo) return 'Escribe el nombre nuevo.';
+    if (nuevo === p.name) return 'Es el mismo nombre.';
+    if (S.items.some(q => q !== p && nombreEnvio(q) === nuevo)) return 'Ya hay un parámetro con ese nombre.';
+    if (p.nuevo) { p.name = nuevo; return ''; }
+    const copia = { name: nuevo, type: p.type, value: p.value, description: p.description || '', tags: p.tags ? { ...p.tags } : {}, nuevo: true, borrar: false, ver: p.ver, orig: null, descripcion_legible: true, de: p.name };
+    Object.assign(p, { value: p.orig.value, type: p.orig.type, description: p.orig.description, tags: p.orig.tags ? { ...p.orig.tags } : null, borrar: true });
+    S.items.splice(i + 1, 0, copia);
+    return '';
+  }
+  function pedirNombre(i) {
+    const p = S.items[i];
+    modal.abrir(`<h2>Cambiar el nombre</h2><p><code>${esc(p.name)}</code></p>
+      <label class="campo renombrar-campo">Nombre nuevo<input id="nNombre" value="${esc(p.name)}" ${NOFILL}></label>
+      <p class="aviso">⚠ En SSM un parámetro no se renombra: se crea uno nuevo con el mismo valor, tipo, descripción y etiquetas, y se borra el viejo. Lo que lo lea por el nombre viejo dejará de encontrarlo, y su historial de versiones no pasa al nuevo. Si el nuevo no se puede crear, el viejo no se borra.</p>
+      <p class="error" id="nError" hidden></p>
+      <div class="acciones"><button type="button" class="primario" id="nSi">Poner en el editor</button><button type="button" class="secundario" id="nNo">Cancelar</button></div>`);
+    const campo = $('nNombre'); campo.focus(); campo.setSelectionRange(campo.value.length, campo.value.length);
+    const poner = () => {
+      const motivo = renombrar(i, campo.value);
+      if (motivo) { $('nError').textContent = motivo; $('nError').hidden = false; return; }
+      modal.cerrar(); pintar(); toast('Nombre cambiado en el editor: revisa y aplica.');
+    };
+    $('nSi').onclick = poner; $('nNo').onclick = () => modal.cerrar();
+    campo.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); poner(); } });
+  }
+
   // ------------------------------------------------ reemplazar (buscar y reemplazar en lo que se ve con el filtro)
   // Solo cambia el editor, como si se hubiera escrito a mano; después, «Revisar cambios» como siempre. Un nombre nuevo es
   // crear otro parámetro con lo mismo y borrar el viejo (en SSM no se puede renombrar).
@@ -497,14 +528,7 @@
         else p.tags = { ...p.tags, [c.clave]: c.despues };
       }
       // Los nombres al final y de abajo arriba: cada nuevo va justo debajo del que sustituye, y el viejo se marca para borrar
-      for (const c of nombres.sort((a, b) => b.i - a.i)) {
-        const p = S.items[c.i], nuevo = sinBarraFinal(c.despues);
-        if (S.items.some(q => q !== p && nombreEnvio(q) === nuevo)) { choques.push(nuevo); continue; }
-        if (p.nuevo) { p.name = nuevo; continue; }
-        const copia = { name: nuevo, type: p.type, value: p.value, description: p.description || '', tags: p.tags ? { ...p.tags } : {}, nuevo: true, borrar: false, ver: p.ver, orig: null, descripcion_legible: true, de: p.name };
-        Object.assign(p, { value: p.orig.value, type: p.orig.type, description: p.orig.description, tags: p.orig.tags ? { ...p.orig.tags } : null, borrar: true });
-        S.items.splice(c.i + 1, 0, copia);
-      }
+      for (const c of nombres.sort((a, b) => b.i - a.i)) if (renombrar(c.i, c.despues)) choques.push(sinBarraFinal(c.despues));
       modal.cerrar(); pintar();
       toast(`${elegidos.length - choques.length} ${elegidos.length - choques.length === 1 ? 'cambio puesto' : 'cambios puestos'} en el editor${choques.length ? `; ${choques.length} ${choques.length === 1 ? 'nombre no, porque ya existe' : 'nombres no, porque ya existen'}: ${choques.join(', ')}` : ''}. Revisa y aplica.`, !!choques.length);
     };
