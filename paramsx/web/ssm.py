@@ -382,6 +382,8 @@ def _revisar(ssm, items, cfg):
     vivos = valores_por_nombre(ssm, nombres) if nombres else {}
     existentes = [n for n in nombres if "value" in vivos.get(n, {}) or n in (meta or {})]
     tags_vivas = etiquetas(ssm, existentes)
+    # Las etiquetas de los viejos de un renombrado: None si el rol no las puede leer (no se sabe cuáles copiar)
+    tags_viejos = {**tags_vivas, **etiquetas(ssm, sorted(viejos - set(tags_vivas)))}
 
     filas = []
     for it in items:
@@ -395,6 +397,11 @@ def _revisar(ssm, items, cfg):
         if accion == "nuevo":
             if existe:
                 fila["errores"].append("Ya existe en AWS: recarga el grupo.")
+            de = it.get("de")
+            if isinstance(de, str) and de and tags_viejos.get(de, {}) is None \
+                    and not vivos.get(de, {}).get("no_existe"):
+                # Renombrar sin poder leerlas crearía el nuevo sin ellas y borraría el viejo: se perderían
+                fila["errores"].append(f"No se pueden leer las etiquetas de {de} (falta el permiso ssm:ListTagsForResource): no se renombra para no perderlas.")
             fila["cambios"] = ["valor", "tipo"] + (["descripción"] if it.get("description") else []) \
                 + (["etiquetas"] if any(str(x).strip() for x in (it.get("tags") or {}).values()) else [])
             if tam > MAX_STANDARD:

@@ -438,6 +438,7 @@
     if (nuevo === p.name) return 'Es el mismo nombre.';
     if (S.items.some(q => q !== p && nombreEnvio(q) === nuevo)) return 'Ya hay un parámetro con ese nombre.';
     if (p.nuevo) { p.name = nuevo; return ''; }
+    if (p.tags === null) return 'No se pueden leer sus etiquetas (falta el permiso ssm:ListTagsForResource): no se renombra para no perderlas.';  // null: no se pudieron leer ({} es que no tiene)
     const copia = { name: nuevo, type: p.type, value: p.value, description: p.description || '', tags: p.tags ? { ...p.tags } : {}, nuevo: true, borrar: false, ver: p.ver, orig: null, descripcion_legible: true, de: p.name };
     Object.assign(p, { value: p.orig.value, type: p.orig.type, description: p.orig.description, tags: p.orig.tags ? { ...p.orig.tags } : null, borrar: true });
     S.items.splice(i + 1, 0, copia);
@@ -448,9 +449,10 @@
     modal.abrir(`<h2>Cambiar el nombre</h2><p><code>${esc(p.name)}</code></p>
       <label class="campo renombrar-campo">Nombre nuevo<input id="nNombre" value="${esc(p.name)}" ${NOFILL}></label>
       <p class="aviso">⚠ En SSM un parámetro no se renombra: se crea uno nuevo con el mismo valor, tipo, descripción y etiquetas, y se borra el viejo. Lo que lo lea por el nombre viejo dejará de encontrarlo, y su historial de versiones no pasa al nuevo. Si el nuevo no se puede crear, el viejo no se borra.</p>
-      <p class="error" id="nError" hidden></p>
+      <p class="aviso mal" id="nError" hidden></p>
       <div class="acciones"><button type="button" class="primario" id="nSi">Poner en el editor</button><button type="button" class="secundario" id="nNo">Cancelar</button></div>`);
     const campo = $('nNombre'); campo.focus(); campo.setSelectionRange(campo.value.length, campo.value.length);
+    if (!p.nuevo && p.tags === null) { $('nError').textContent = 'No se pueden leer sus etiquetas (falta el permiso ssm:ListTagsForResource): no se renombra para no perderlas.'; $('nError').hidden = false; $('nSi').disabled = true; }
     const poner = () => {
       const motivo = renombrar(i, campo.value);
       if (motivo) { $('nError').textContent = motivo; $('nError').hidden = false; return; }
@@ -528,9 +530,9 @@
         else p.tags = { ...p.tags, [c.clave]: c.despues };
       }
       // Los nombres al final y de abajo arriba: cada nuevo va justo debajo del que sustituye, y el viejo se marca para borrar
-      for (const c of nombres.sort((a, b) => b.i - a.i)) if (renombrar(c.i, c.despues)) choques.push(sinBarraFinal(c.despues));
+      for (const c of nombres.sort((a, b) => b.i - a.i)) { const motivo = renombrar(c.i, c.despues); if (motivo) choques.push(`${S.items[c.i].name} (${motivo.replace(/\.$/, '')})`); }
       modal.cerrar(); pintar();
-      toast(`${elegidos.length - choques.length} ${elegidos.length - choques.length === 1 ? 'cambio puesto' : 'cambios puestos'} en el editor${choques.length ? `; ${choques.length} ${choques.length === 1 ? 'nombre no, porque ya existe' : 'nombres no, porque ya existen'}: ${choques.join(', ')}` : ''}. Revisa y aplica.`, !!choques.length);
+      toast(`${elegidos.length - choques.length} ${elegidos.length - choques.length === 1 ? 'cambio puesto' : 'cambios puestos'} en el editor${choques.length ? `; ${choques.length} ${choques.length === 1 ? 'nombre no se ha cambiado' : 'nombres no se han cambiado'}: ${choques.join('; ')}` : ''}. Revisa y aplica.`, !!choques.length);
     };
   };
 

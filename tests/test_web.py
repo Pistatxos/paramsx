@@ -501,3 +501,30 @@ def test_explorar_busca_en_aws_lo_que_no_cabe_en_la_lista(cliente, ssm):
     ssm.poner("/prod/otra/Cosa", "x2")
     r = cliente.get("/api/explorar?contiene=Cosa").get_json()
     assert r["nombres"] == ["/prod/otra/Cosa"]
+
+
+def test_renombrar_sin_poder_leer_las_etiquetas_no_crea_el_nuevo_ni_borra_el_viejo(cliente, ssm):
+    extra = {**TAGS, "Owner": "ana"}  # una que se perdería
+    ssm.poner("/dev/app/db", "secreto", tags=extra)
+    ssm.tags_denegadas.add("/dev/app/db")
+    p = cargar(cliente)["/dev/app/db"]
+    assert p["tags"] is None  # no se pudieron leer: no es lo mismo que no tener ({})
+    # Aunque el navegador mande las obligatorias, no se sabe qué más tenía: no se renombra
+    items = renombrar(p, "/dev/app/db2")
+    items[0]["tags"] = dict(TAGS)
+    filas = {f["name"]: f for f in cliente.post("/api/plan", json={"items": items}).get_json()["plan"]}
+    assert "ssm:ListTagsForResource" in " ".join(filas["/dev/app/db2"]["errores"])
+    assert "No se borra" in " ".join(filas["/dev/app/db"]["errores"])
+    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": CONFIRMA, "borrados": "1"}).get_json()
+    assert not any(x.get("ok") for x in r.get("resultados", [])), r
+    assert "/dev/app/db2" not in ssm.params and ssm.params["/dev/app/db"]["tags"] == extra
+    assert not ssm.ops("PutParameter") and not ssm.ops("DeleteParameters") and not ssm.ops("DeleteParameter")
+
+
+def test_renombrar_con_etiquetas_legibles_sigue_igual(cliente, ssm):
+    ssm.poner("/dev/app/db", "secreto", tags=TAGS)
+    p = cargar(cliente)["/dev/app/db"]
+    r = cliente.post("/api/aplicar", json={"items": renombrar(p, "/dev/app/db2"), "confirmacion": CONFIRMA,
+                                           "borrados": "1"}).get_json()
+    assert all(x["ok"] for x in r["resultados"]), r
+    assert ssm.params["/dev/app/db2"]["tags"] == TAGS and "/dev/app/db" not in ssm.params

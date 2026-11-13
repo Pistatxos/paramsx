@@ -27,6 +27,7 @@ class FakeSSM:
         self.rutas_denegadas = set()   # get_parameters_by_path da AccessDenied bajo estos prefijos
         self.kms_bloqueados = set()    # no se pueden descifrar
         self.iam_bloqueados = set()    # el rol no puede leerlos
+        self.tags_denegadas = set()    # el rol no puede leer sus etiquetas (ssm:ListTagsForResource)
         self.sin_describe = False
         self.too_many = {}             # nombre -> cuántos TooManyUpdates lanzar antes de aceptar
         self.reloj = datetime.datetime(2026, 10, 1, 9, 0, tzinfo=datetime.timezone.utc)
@@ -129,6 +130,8 @@ class FakeSSM:
 
     def list_tags_for_resource(self, **kw):
         self._llamar("ListTagsForResource", kw)
+        if kw["ResourceId"] in self.tags_denegadas:
+            raise error("AccessDeniedException", "not authorized to perform: ssm:ListTagsForResource")
         p = self.params.get(kw["ResourceId"])
         if p is None:
             raise error("InvalidResourceId")

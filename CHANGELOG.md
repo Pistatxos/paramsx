@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.7
+
+### Corregido
+
+- **Renombrar ya no pierde las etiquetas si el rol no puede leerlas.** Si `ssm:ListTagsForResource` está denegado (las etiquetas salen como desconocidas, no como vacías), ✎ y «Reemplazar» no ponen el renombrado en el editor y dicen qué permiso falta. Además, la revisión en el servidor lo frena: el nuevo no se crea y el viejo no se borra. Con permiso, o si el parámetro de verdad no tiene etiquetas, todo sigue igual.
+
 ## 2.5.6
 
 ### Añadido
