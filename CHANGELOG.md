@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.9
+
+### Corregido
+
+- **Un patrón sin la parte del principio ya encuentra**: `/rds/*/host` no encontraba nada porque se buscaba desde el principio del nombre y los parámetros empiezan por `/dev/…` o `/prod/…`. Ahora, si desde el principio no hay nada, se busca en cualquier nivel (como si empezara por `/**/`): encuentra `/dev/rds/cee/host`, `/prod/rds/core/host`… La línea de estado dice «en cualquier nivel». Lo mismo que ya pasaba con una ruta sin `*` que no existe.
+
 ## 2.5.8
 
 ### Añadido

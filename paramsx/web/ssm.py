@@ -202,7 +202,12 @@ def cargar(ssm, ruta):
     «/prod/common/rds/x», «/dev/common/rds/x»…)."""
     ruta = "/" + ruta.strip().strip("/") if ruta.strip().strip("/") else "/"
     if "*" in ruta:
-        return _por_patron(ssm, ruta)
+        r = _por_patron(ssm, ruta)
+        if r["parametros"] or ruta.startswith("/**"):
+            return r
+        # Nada desde el principio: en cualquier nivel («/rds/*/host» encuentra «/dev/rds/cee/host»), como con una ruta que no existe
+        r = _por_patron(ssm, "/**" + ruta)
+        return {**r, "patron": ruta, "cualquier_nivel": True} if r["parametros"] else {**r, "patron": ruta}
     avisos = []
     try:
         meta = describir(ssm, ruta)

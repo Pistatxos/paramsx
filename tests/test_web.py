@@ -538,5 +538,8 @@ def test_ruta_con_patron(cliente, ssm):
     assert r["parametros"][0]["value"] == "v-/dev/rds/cee/host"
     assert list(cargar(cliente, "/dev/**/host")) == ["/dev/rds/cee/host", "/dev/rds/cee/x/host", "/dev/rds/core/host"]
     assert cargar(cliente, "/dev/nada/*") == {}
+    r = cliente.post("/api/cargar", json={"ruta": "/rds/*/host"}).get_json()  # sin el entorno: en cualquier nivel
+    assert ([p["name"] for p in r["parametros"]], r["patron"], r.get("cualquier_nivel")) == (
+        ["/DEV/rds/a/host", "/dev/rds/cee/host", "/dev/rds/core/host"], "/rds/*/host", True)
     rutas = [f["Values"][0] for kw in ssm.ops("DescribeParameters") for f in kw.get("ParameterFilters", []) if f["Key"] == "Path"]
-    assert set(rutas) == {"/dev/rds", "/dev/nada", "/dev"}  # solo se lista la parte fija
+    assert {"/dev/rds", "/dev/nada", "/dev"} <= set(rutas)  # solo se lista la parte fija (y «/rds» antes de buscar en cualquier nivel)
