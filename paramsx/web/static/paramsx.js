@@ -182,10 +182,10 @@
     $('pEstado').textContent = `Leyendo ${ruta} de AWS…`; $('pLista').innerHTML = ''; $('pBarra').hidden = true;
     try {
       const r = await post('/api/cargar', { ruta });
-      S.ruta = r.ruta;
+      S.ruta = r.patron ? (r.patron.split('*')[0].replace(/\/[^/]*$/, '') || '/') : r.ruta;  // con patrón, «+ Nuevo» parte de lo fijo
       S.items = r.parametros.map(p => ({ ...p, tags: p.tags ? { ...p.tags } : null, orig: { ...p, tags: p.tags ? { ...p.tags } : null }, borrar: false, nuevo: false, ver: false }));
       const bloqueados = S.items.filter(p => p.bloqueado).length;
-      $('pEstado').innerHTML = `${r.buscado ? `Buscado <b>«${esc(r.buscado)}»</b> · ${S.items.length} ${S.items.length === 1 ? 'parámetro lo lleva' : 'parámetros lo llevan'} en el nombre` : `<b>${esc(r.ruta)}</b> · ${S.items.length} par`}${bloqueados ? ` · 🔒 ${bloqueados} sin permiso` : ''}${r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('')} · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>`;
+      $('pEstado').innerHTML = `${r.patron ? `Patrón <b>«${esc(r.patron)}»</b> · ${S.items.length} ${S.items.length === 1 ? 'encaja' : 'encajan'}` : r.buscado ? `Buscado <b>«${esc(r.buscado)}»</b> · ${S.items.length} ${S.items.length === 1 ? 'parámetro lo lleva' : 'parámetros lo llevan'} en el nombre` : `<b>${esc(r.ruta)}</b> · ${S.items.length} par`}${bloqueados ? ` · 🔒 ${bloqueados} sin permiso` : ''}${r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('')} · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>`;
       $('pBarra').hidden = false; pintar();
     } catch (e) {
       $('pEstado').innerHTML = `<span class="error">${esc(e.message)}</span>`; S.items = []; S.ruta = '';

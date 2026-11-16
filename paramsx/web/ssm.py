@@ -201,6 +201,8 @@ def cargar(ssm, ruta):
     si tampoco, los que llevan ese texto en el nombre («/common/rds/x» encuentra
     «/prod/common/rds/x», «/dev/common/rds/x»…)."""
     ruta = "/" + ruta.strip().strip("/") if ruta.strip().strip("/") else "/"
+    if "*" in ruta:
+        return _por_patron(ssm, ruta)
     avisos = []
     try:
         meta = describir(ssm, ruta)
@@ -242,6 +244,38 @@ def cargar(ssm, ruta):
             if meta:  # para que la pantalla diga «Buscado …» en vez de la ruta
                 return {**_montar(ssm, ruta, meta, valores, avisos), "buscado": ruta[1:]}
     return _montar(ssm, ruta, meta, valores, avisos)
+
+
+def patron_regex(patron):
+    """«/dev/rds/*/host» → regex: «*» es un nivel (sin «/»), «**» cualquier número de niveles.
+    Distingue mayúsculas, como SSM."""
+    trozos = re.split(r"(\*\*/?|\*)", patron)
+    return re.compile("".join("(?:.*/)?" if t == "**/" else ".*" if t == "**" else "[^/]*" if t == "*" else re.escape(t)
+                              for t in trozos) + r"\Z")
+
+
+def _por_patron(ssm, patron):
+    """Los parámetros cuyo nombre encaja con el patrón: se listan los de la parte fija (hasta el
+    primer «*») y se filtran, porque SSM no busca con comodines. Como mucho MAX_CONTIENEN con valor."""
+    fija = patron.split("*", 1)[0].rsplit("/", 1)[0] or "/"
+    try:
+        meta = describir(ssm, fija)
+    except ClientError as exc:
+        raise ParametrosError("Para buscar con «*» hace falta poder listar parámetros (ssm:DescribeParameters)."
+                              if denegado(exc) else motivo(exc)) from None
+    avisos = [f"Bajo {fija} hay más de {MAX_LISTADO}: solo se han mirado los {MAX_LISTADO} primeros; "
+              "acota la parte de antes del «*»."] if len(meta) >= MAX_LISTADO else []
+    regex = patron_regex(patron)
+    nombres = sorted(n for n in meta if regex.match(n))
+    if len(nombres) > MAX_CONTIENEN:
+        avisos.append(f"Encajan {len(nombres)}: se muestran los {MAX_CONTIENEN} primeros; acota el patrón.")
+        nombres = nombres[:MAX_CONTIENEN]
+    meta = {n: meta[n] for n in nombres}
+    try:
+        valores = valores_por_nombre(ssm, nombres)
+    except ClientError as exc:
+        raise ParametrosError(motivo(exc)) from None
+    return {**_montar(ssm, patron, meta, valores, avisos), "patron": patron}
 
 
 def _contienen(ssm, texto):

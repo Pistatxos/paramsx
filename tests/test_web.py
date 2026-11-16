@@ -528,3 +528,15 @@ def test_renombrar_con_etiquetas_legibles_sigue_igual(cliente, ssm):
                                            "borrados": "1"}).get_json()
     assert all(x["ok"] for x in r["resultados"]), r
     assert ssm.params["/dev/app/db2"]["tags"] == TAGS and "/dev/app/db" not in ssm.params
+
+
+def test_ruta_con_patron(cliente, ssm):
+    for n in ("/dev/rds/cee/host", "/dev/rds/core/host", "/dev/rds/cee/x/host", "/dev/rds/cee/port", "/DEV/rds/a/host"):
+        ssm.poner(n, "v-" + n, tipo="String")
+    r = cliente.post("/api/cargar", json={"ruta": "dev/rds/*/host"}).get_json()  # sin barra: se pone sola
+    assert ([p["name"] for p in r["parametros"]], r["patron"]) == (["/dev/rds/cee/host", "/dev/rds/core/host"], "/dev/rds/*/host")
+    assert r["parametros"][0]["value"] == "v-/dev/rds/cee/host"
+    assert list(cargar(cliente, "/dev/**/host")) == ["/dev/rds/cee/host", "/dev/rds/cee/x/host", "/dev/rds/core/host"]
+    assert cargar(cliente, "/dev/nada/*") == {}
+    rutas = [f["Values"][0] for kw in ssm.ops("DescribeParameters") for f in kw.get("ParameterFilters", []) if f["Key"] == "Path"]
+    assert set(rutas) == {"/dev/rds", "/dev/nada", "/dev"}  # solo se lista la parte fija

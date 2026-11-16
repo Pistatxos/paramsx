@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.8
+
+### Añadido
+
+- **Buscar con `*` en la ruta**: `/dev/rds/*/host` carga `/dev/rds/cee/host`, `/dev/rds/core/host`… (`*` es un nivel; `**`, cualquier número de niveles, p. ej. `/API/**/Host`). Distingue mayúsculas, como SSM. Como SSM no busca con comodines, se lista lo que hay bajo la parte fija (`/dev/rds`) y se filtra: cuanto más larga la parte fija, más rápido. Como mucho se cargan 200; la línea de estado dice «Patrón «…» · N encajan».
+
 ## 2.5.7
 
 ### Corregido
