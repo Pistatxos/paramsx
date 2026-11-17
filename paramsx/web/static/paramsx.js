@@ -380,6 +380,8 @@
     let r;
     try { r = await post('/api/plan', { items }); } catch (e) { return modal.abrir(`<h2>Revisar cambios</h2><p class="error">${esc(e.message)}</p>`); }
     const validos = r.plan.filter(f => !f.errores.length), papelera = validos.filter(f => f.papelera).length;
+    // dónde quedaría la copia (la fecha la pone el servidor al borrar): /papelera/<fecha>/<nombre>
+    const ejemploPapelera = `/papelera/${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}/${(validos.find(f => f.papelera) || {}).name?.replace(/^\//, '') || ''}`;
     const conflictos = r.plan.filter(f => f.conflicto).length;
     const frase = `APLICAR EN ${r.account}`;
     modal.abrir(`<h2>Revisar cambios</h2><p>Comparado con lo que hay ahora en AWS, en la cuenta <b>${esc(r.account)}</b> · ${esc(r.region_name)}.${r.plan.length - validos.length ? ` <span class="warn">${r.plan.length - validos.length} no se aplicarán (ver motivo).</span>` : ''}${conflictos ? ' <b class="error">Hay conflictos: recarga el grupo para ver lo que hay ahora.</b>' : ''}</p>
@@ -390,7 +392,8 @@
         ${f.cambios.includes('valor') && f.accion === 'editar' ? `<details><summary>Ver el valor antes y después</summary><div class="diff"><div><small>Ahora en AWS</small><pre>${esc(f.antes ?? '')}</pre></div><div><small>Después</small><pre>${esc(actual.value ?? '')}</pre></div></div></details>` : ''}
         ${f.tags_poner && Object.keys(f.tags_poner).length ? `<small>Etiquetas: ${Object.entries(f.tags_poner).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(', ')}</small>` : ''}${f.tags_quitar && f.tags_quitar.length ? `<small>Quitar etiquetas: ${f.tags_quitar.map(esc).join(', ')}</small>` : ''}</div>`;
       }).join('')}</div>
-      ${validos.length ? `<div class="confirmar">${papelera ? `<label class="papelera-check"><input type="checkbox" id="pGuardarPapelera" checked> 🗑 Guardar copia en la papelera ${papelera === 1 ? 'del que se borra' : `de los ${papelera} que se borran`} <span class="muted">· se puede recuperar</span></label>` : ''}
+      ${validos.length ? `<div class="confirmar">${papelera ? `<div class="papelera-caja"><label class="papelera-check"><input type="checkbox" id="pGuardarPapelera"> 🗑 <b>Guardar copia en la papelera</b> antes de borrar${papelera > 1 ? ` (${papelera})` : ''}</label>
+          <small>Se guardaría tal cual (valor, tipo, descripción, etiquetas y clave KMS) en el mismo SSM, por ejemplo en <code>${esc(ejemploPapelera)}</code>. Se recupera desde <b>🗑 Papelera</b>.</small></div>` : ''}
         <label class="confirmar-frase"><span>Para aplicar, escribe <code>${esc(frase)}</code></span><input id="pConfirma" ${NOFILL}></label>
         <div class="acciones"><button type="button" class="primario" id="pAplicar" disabled>Aplicar ${validos.length} ${validos.length === 1 ? 'cambio' : 'cambios'}</button><button type="button" class="secundario" id="pSeguir">Seguir editando</button>${conflictos ? '<button type="button" class="secundario" id="pRecargar">Recargar el grupo</button>' : ''}</div></div>`
       : `<div class="acciones"><button type="button" class="secundario" id="pSeguir">Seguir editando</button>${conflictos ? '<button type="button" class="secundario" id="pRecargar">Recargar el grupo</button>' : ''}</div>`}`);

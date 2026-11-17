@@ -166,7 +166,7 @@ input:disabled, select:disabled, textarea:disabled, textarea[readonly] { backgro
 .diff pre { background: var(--fondo); border-radius: 8px; padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 4px 0; }
 .diff small { color: var(--suave); font-weight: 700; }
 details summary { cursor: pointer; color: var(--acento); font-size: 12.5px; font-weight: 600; }
-.confirmar { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--borde-suave); padding-top: 14px; }
+.confirmar { display: flex; flex-direction: column; gap: 14px; border-top: 1px solid var(--borde-suave); padding-top: 16px; margin-top: 18px; }
 .confirmar label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .confirmar input { max-width: 380px; font-family: var(--mono); }
 
@@ -320,3 +320,6 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .confirmar .confirmar-frase { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
 .confirmar .confirmar-frase > span { white-space: nowrap; }
 .confirmar .confirmar-frase input { flex: 1; min-width: 220px; max-width: none; }
+.papelera-caja { background: #f4f8fb; border: 1px solid #dbe6ef; border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.papelera-caja small { color: var(--suave); font-size: 12px; line-height: 1.5; }
+.papelera-caja code { background: #fff; border: 1px solid var(--borde-suave); border-radius: 5px; padding: 1px 5px; word-break: normal; overflow-wrap: anywhere; }

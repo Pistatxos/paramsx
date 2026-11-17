@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.13
+
+### Cambiado
+
+- La casilla **🗑 Guardar copia en la papelera** de «Revisar cambios» viene **sin marcar**: márcala si quieres poder recuperar lo que borras. Va en un recuadro propio, con un ejemplo de dónde quedaría la copia (`/papelera/<fecha>/<nombre>`), y la revisión tiene más aire.
+
 ## 2.5.12
 
 ### Cambiado
