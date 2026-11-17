@@ -235,7 +235,8 @@ def test_aplicar_borra_de_10_en_10_y_pide_confirmacion(cliente, ssm):
     r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": "APLICAR EN 999", "borrados": "25"})
     assert r.status_code == 400
     r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": CONFIRMA, "borrados": "25"}).get_json()
-    assert all(x["ok"] for x in r["resultados"]) and not ssm.params
+    assert all(x["ok"] for x in r["resultados"])
+    assert all(n.startswith("/papelera/") for n in ssm.params) and len(ssm.params) == 25  # quedan sus copias en la papelera
     assert [len(kw["Names"]) for kw in ssm.ops("DeleteParameters")] == [10, 10, 5]
 
 
@@ -556,3 +557,69 @@ def test_patron_con_parametros_en_la_raiz_y_en_varios_entornos(cliente, ssm):
     r = buscar("/**/rds/*/host")
     assert [p["name"] for p in r["parametros"]] == ["/dev/rds/core/host", "/prod/rds/core/host", "/rds/cee/host"]
     assert r["patron"] == "/**/rds/*/host" and not r.get("cualquier_nivel")
+
+
+# ---------------------------------------------------------------- papelera
+
+def borrar(cliente, p, **extra):
+    return cliente.post("/api/aplicar", json={"items": [item(p, accion="borrar", **extra)], "confirmacion": CONFIRMA,
+                                              "borrados": "1"}).get_json()["resultados"][0]
+
+
+def test_borrar_guarda_copia_en_la_papelera_y_se_restaura_tal_cual(cliente, ssm):
+    clave = "arn:aws:kms:eu-south-2:1:key/propia"
+    ssm.poner("/dev/app/db", "secreto", descripcion="Clave BD", tags=TAGS, key_id=clave)
+    p = cargar(cliente)["/dev/app/db"]
+    plan = cliente.post("/api/plan", json={"items": [item(p, accion="borrar")]}).get_json()["plan"]
+    assert "papelera" in " ".join(plan[0]["avisos"])
+    r = borrar(cliente, p)
+    assert r["ok"], r
+    assert "/dev/app/db" not in ssm.params
+    copia = ssm.params[r["papelera"]]
+    assert r["papelera"].startswith("/papelera/") and r["papelera"].endswith("/dev/app/db")
+    assert (copia["value"], copia["description"], copia["key_id"]) == ("secreto", "Clave BD", clave)
+    assert {k: v for k, v in copia["tags"].items() if not k.startswith("xinfra:")} == TAGS
+    assert copia["tags"]["xinfra:papelera-de"] == "/dev/app/db"
+    # no sale al cargar «/» ni al explorar; sí en la papelera, sin valores
+    assert r["papelera"] not in cargar(cliente, "/")
+    assert r["papelera"] not in cliente.get("/api/explorar").get_json()["nombres"]
+    filas = cliente.get("/api/papelera").get_json()["filas"]
+    assert [(f["nombre"], f["original"]) for f in filas] == [(r["papelera"], "/dev/app/db")]
+    assert "secreto" not in str(filas)
+    res = cliente.post("/api/papelera/restaurar", json={"nombres": [r["papelera"]]}).get_json()["resultados"][0]
+    assert res["ok"], res
+    vuelto = ssm.params["/dev/app/db"]
+    assert (vuelto["value"], vuelto["description"], vuelto["key_id"], vuelto["tags"]) == ("secreto", "Clave BD", clave, TAGS)
+    assert r["papelera"] not in ssm.params
+
+
+def test_papelera_no_pisa_al_restaurar_y_vaciar_pide_la_cuenta(cliente, ssm):
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=TAGS)
+    r = borrar(cliente, cargar(cliente)["/dev/app/url"])
+    ssm.poner("/dev/app/url", "otro", tipo="String")  # alguien lo ha vuelto a crear
+    res = cliente.post("/api/papelera/restaurar", json={"nombres": [r["papelera"]]}).get_json()["resultados"][0]
+    assert not res["ok"] and "ya existe" in res["error"]
+    assert ssm.params["/dev/app/url"]["value"] == "otro"
+    assert cliente.post("/api/papelera/vaciar", json={"nombres": [r["papelera"]]}).status_code == 400
+    assert cliente.post("/api/papelera/vaciar", json={"nombres": ["/dev/app/url"], "confirmacion": CONFIRMA}).status_code == 400
+    v = cliente.post("/api/papelera/vaciar", json={"nombres": [r["papelera"]], "confirmacion": CONFIRMA}).get_json()
+    assert v["resultados"][0]["ok"] and r["papelera"] not in ssm.params
+
+
+def test_sin_poder_guardar_copia_no_se_borra_salvo_que_se_acepte(cliente, ssm):
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=TAGS)
+    ssm.put_denegado = "/papelera/"
+    p = cargar(cliente)["/dev/app/url"]
+    r = borrar(cliente, p)
+    assert not r["ok"] and r["sin_copia"] and "papelera" in r["error"]
+    assert "/dev/app/url" in ssm.params
+    assert borrar(cliente, p, sin_papelera=True)["ok"]
+    assert "/dev/app/url" not in ssm.params
+
+
+def test_renombrar_no_pasa_por_la_papelera(cliente, ssm):
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=TAGS)
+    r = cliente.post("/api/aplicar", json={"items": renombrar(cargar(cliente)["/dev/app/url"], "/dev/app/url2"),
+                                           "confirmacion": CONFIRMA, "borrados": "1"}).get_json()
+    assert all(x["ok"] for x in r["resultados"]), r
+    assert not [n for n in ssm.params if n.startswith("/papelera/")]

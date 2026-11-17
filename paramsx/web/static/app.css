@@ -309,3 +309,9 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .modo-listado .param:not(.abierta):not(.nuevo) > :not(header) { display: none; }
 .modo-listado .param:not(.abierta):not(.nuevo) > header { border-bottom: 0; padding-top: 7px; padding-bottom: 7px; }
 .modo-listado .nombre { cursor: pointer; }
+
+/* ---------------------------------------------------------------- papelera */
+.papelera-lista .plan-fila { flex-direction: row; gap: 10px; align-items: flex-start; cursor: pointer; }
+.papelera-lista .plan-fila small { display: block; margin-top: 2px; }
+.papelera-lista input[type=checkbox], .papelera-todos input[type=checkbox] { width: auto; margin: 3px 0 0; flex: none; }
+.papelera-todos { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; margin: 6px 0; }

@@ -372,7 +372,7 @@
 
   // ------------------------------------------------ revisar y aplicar
   const paraEnviar = () => pendientes().map(p => ({ name: nombreEnvio(p), accion: p.nuevo ? 'nuevo' : p.borrar ? 'borrar' : 'editar', version: p.orig ? p.orig.version : null,
-    value: p.value, description: p.description || '', type: p.type, tags: p.tags, ...(p.nuevo && p.de ? { de: p.de } : {}) }));
+    value: p.value, description: p.description || '', type: p.type, tags: p.tags, ...(p.nuevo && p.de ? { de: p.de } : {}), ...(p.sin_papelera ? { sin_papelera: true } : {}) }));
   const ETIQUETA = { nuevo: 'Nuevo', editar: 'Modificado', borrar: 'Borrar' };
   $('pRevisar').onclick = async () => {
     const items = paraEnviar();
@@ -405,8 +405,14 @@
       try {
         const res = await post('/api/aplicar', { items: enviar, confirmacion: $('pConfirma').value.trim(), borrados: $('pBorrados') ? $('pBorrados').value.trim() : '' });
         const ok = res.resultados.filter(x => x.ok).length, mal = res.resultados.filter(x => !x.ok);
-        modal.abrir(`<h2>${mal.length ? 'Aplicado en parte' : 'Aplicado'}</h2><p>${ok} de ${res.resultados.length} cambios hechos en AWS. El grupo se ha vuelto a cargar.</p>${mal.length ? `<div class="plan">${mal.map(x => `<div class="plan-fila mal"><code>${esc(x.name)}</code><small class="error">${esc(x.error)}</small></div>`).join('')}</div>` : ''}<div class="acciones"><button type="button" class="primario" id="pSeguir">Cerrar</button></div>`);
+        modal.abrir(`<h2>${mal.length ? 'Aplicado en parte' : 'Aplicado'}</h2><p>${ok} de ${res.resultados.length} cambios hechos en AWS. El grupo se ha vuelto a cargar.</p>${mal.length ? `<div class="plan">${mal.map(x => `<div class="plan-fila mal"><code>${esc(x.name)}</code><small class="error">${esc(x.error)}</small></div>`).join('')}</div>` : ''}<div class="acciones"><button type="button" class="primario" id="pSeguir">Cerrar</button>${mal.some(x => x.sin_copia) ? '<button type="button" class="secundario peligro" id="pSinCopia" title="Se borran sin guardar copia: no se podrán recuperar">Borrarlos sin copia…</button>' : ''}</div>`);
         $('pSeguir').onclick = modal.cerrar;
+        const sinCopia = new Set(mal.filter(x => x.sin_copia).map(x => x.name));
+        if ($('pSinCopia')) $('pSinCopia').onclick = () => {  // el usuario acepta borrarlos sin copia: quedan marcados, revisa y aplica
+          if (!confirm(`¿Borrar ${sinCopia.size} sin guardar copia en la papelera? No se podrán recuperar.`)) return;
+          S.items.filter(p => sinCopia.has(p.name)).forEach(p => { p.sin_papelera = true; });
+          modal.cerrar(); toast('Marcados para borrar sin copia: revisa y aplica.');
+        };
         // Se recarga de AWS (puede haber rutas nuevas o borradas), pero lo que no se aplicó (falló o la revisión lo dejó
         // fuera) se guarda antes y se vuelve a poner, para corregirlo sin escribirlo otra vez
         const hechos = new Set(res.resultados.filter(x => x.ok).map(x => x.name));
@@ -566,6 +572,42 @@
     };
     if (v.length) ver(0);
   }
+
+  // ------------------------------------------------ papelera: lo borrado desde aquí (copias en /papelera del mismo SSM)
+  $('pPapelera').onclick = async () => {
+    modal.abrir('<h2>🗑 Papelera</h2><p>Leyendo de AWS…</p>');
+    let r;
+    try { r = await api('/api/papelera'); } catch (e) { return modal.abrir(`<h2>🗑 Papelera</h2><p class="error">${esc(e.message)}</p>`); }
+    const fecha = t => { const d = new Date(t); return isNaN(d) ? esc(t || '') : d.toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' }); };
+    modal.abrir(`<h2>🗑 Papelera · ${r.filas.length}</h2>
+      <p>Lo que se borra desde ParamsX se guarda antes aquí, tal cual (valor, tipo, descripción, etiquetas y clave KMS), en <code>${esc(r.ruta)}</code> de esta cuenta y región. Sigue cifrado en AWS. <b>Restaurar</b> lo vuelve a crear en su sitio; <b>Borrar para siempre</b> no tiene vuelta atrás.</p>
+      ${r.filas.length ? `<label class="papelera-todos"><input type="checkbox" id="ppTodos"> Todos</label>
+      <div class="plan papelera-lista">${r.filas.map((f, i) => `<label class="plan-fila"><input type="checkbox" data-pp="${i}"><span><code>${esc(f.original)}</code>
+        <small class="muted">${fecha(f.el)}${f.por ? ' · ' + esc(f.por) : ''} · ${esc(f.tipo || '')}${f.sin_etiquetas ? ' · <span class="warn">sin sus etiquetas (no se pudieron leer)</span>' : ''}</small></span></label>`).join('')}</div>
+      <label class="campo">Para borrar para siempre, escribe <code>APLICAR EN ${esc(r.account)}</code><input id="ppConfirma" ${NOFILL}></label>
+      <div class="acciones"><button type="button" class="primario" id="ppRestaurar" disabled>Restaurar</button><button type="button" class="secundario peligro" id="ppBorrar" disabled>Borrar para siempre</button><button type="button" class="secundario" id="ppNo">Cerrar</button></div>`
+      : '<p>Está vacía.</p><div class="acciones"><button type="button" class="secundario" id="ppNo">Cerrar</button></div>'}`);
+    $('ppNo').onclick = () => modal.cerrar();
+    if (!r.filas.length) return;
+    const elegidos = () => [...$('modalCuerpo').querySelectorAll('[data-pp]:checked')].map(c => r.filas[+c.dataset.pp]);
+    const marcar = () => { const n = elegidos().length; $('ppRestaurar').disabled = !n; $('ppBorrar').disabled = !n; $('ppRestaurar').textContent = n ? `Restaurar ${n}` : 'Restaurar'; $('ppBorrar').textContent = n ? `Borrar ${n} para siempre` : 'Borrar para siempre'; };
+    $('modalCuerpo').onchange = e => { if (e.target.id === 'ppTodos') $('modalCuerpo').querySelectorAll('[data-pp]').forEach(c => { c.checked = e.target.checked; }); marcar(); };
+    const hacer = async (accion, extra = {}) => {
+      const filas = elegidos();
+      try {
+        const res = await post(`/api/papelera/${accion}`, { nombres: filas.map(f => f.nombre), ...extra });
+        const mal = res.resultados.filter(x => !x.ok);
+        toast(mal.length ? `${res.resultados.length - mal.length} hechos; ${mal.length} no: ${mal.map(x => x.error).join(' · ')}` : accion === 'restaurar' ? `${filas.length} restaurados en su sitio` : `${filas.length} borrados para siempre`, !!mal.length);
+        $('pPapelera').click();  // la papelera, otra vez de AWS
+        if (accion === 'restaurar' && S.cargada && !pendientes().length) { S.carpetas = null; B.enAws = null; $('pRuta').value = S.cargada; cargar(); }
+      } catch (e) { toast(e.message, true); }
+    };
+    $('ppRestaurar').onclick = () => confirm(`¿Restaurar ${elegidos().length} en su sitio?`) && hacer('restaurar');
+    $('ppBorrar').onclick = () => {
+      if (!$('ppConfirma').value.trim()) return toast(`Escribe APLICAR EN ${r.account} para borrar para siempre`, true);
+      if (confirm(`¿Borrar para siempre ${elegidos().length}? No se podrán recuperar.`)) hacer('vaciar', { confirmacion: $('ppConfirma').value.trim() });
+    };
+  };
 
   // ------------------------------------------------ explorar (solo nombres): árbol con entornos en color
   $('pExplorar').onclick = async () => {

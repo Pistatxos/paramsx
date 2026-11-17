@@ -28,6 +28,7 @@ class FakeSSM:
         self.kms_bloqueados = set()    # no se pueden descifrar
         self.iam_bloqueados = set()    # el rol no puede leerlos
         self.tags_denegadas = set()    # el rol no puede leer sus etiquetas (ssm:ListTagsForResource)
+        self.put_denegado = ""         # prefijo donde el rol no puede escribir (p. ej. la papelera)
         self.sin_describe = False
         self.too_many = {}             # nombre -> cuántos TooManyUpdates lanzar antes de aceptar
         self.reloj = datetime.datetime(2026, 10, 1, 9, 0, tzinfo=datetime.timezone.utc)
@@ -140,6 +141,8 @@ class FakeSSM:
     def put_parameter(self, **kw):
         self._llamar("PutParameter", kw)
         n = kw["Name"]
+        if self.put_denegado and n.startswith(self.put_denegado):
+            raise error("AccessDeniedException", "not authorized to perform: ssm:PutParameter")
         if self.too_many.get(n):
             self.too_many[n] -= 1
             raise error("TooManyUpdates")
@@ -172,6 +175,11 @@ class FakeSSM:
         self._llamar("RemoveTagsFromResource", kw)
         for k in kw["TagKeys"]:
             self.params[kw["ResourceId"]]["tags"].pop(k, None)
+        return {}
+
+    def delete_parameter(self, **kw):
+        self._llamar("DeleteParameter", kw)
+        del self.params[kw["Name"]]
         return {}
 
     def delete_parameters(self, **kw):

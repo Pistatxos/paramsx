@@ -382,7 +382,32 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
         borrados = sum(1 for it in items if it.get("accion") == "borrar")
         if borrados and str(datos.get("borrados") or "").strip() != str(borrados):
             raise ErrorWeb(f"Se van a borrar {borrados}: escribe {borrados} para confirmarlo.")
-        return jsonify({"resultados": ssm_web.aplicar(ssm(), items, config_activa())})
+        por = cuenta(perfil, region)["arn"].rsplit("/", 1)[-1]  # quién borra, para la papelera
+        return jsonify({"resultados": ssm_web.aplicar(ssm(), items, config_activa(), por=por)})
+
+    @app.get("/api/papelera")
+    def api_papelera():
+        perfil, region = donde()
+        return jsonify({"filas": ssm_web.papelera(ssm()), "ruta": ssm_web.PAPELERA,
+                        "account": cuenta(perfil, region)["account"]})
+
+    @app.post("/api/papelera/<accion>")
+    def api_papelera_accion(accion):
+        """restaurar: los vuelve a crear en su sitio · vaciar: los borra para siempre (con la cuenta)."""
+        if accion not in ("restaurar", "vaciar"):
+            raise ErrorWeb("Acción no válida.")
+        datos = cuerpo()
+        nombres = datos.get("nombres")
+        if not isinstance(nombres, list) or not nombres or len(nombres) > 200 \
+                or not all(isinstance(n, str) and ssm_web.en_papelera(n) for n in nombres):
+            raise ErrorWeb("Elige qué parámetros de la papelera.")
+        if accion == "vaciar":
+            perfil, region = donde()
+            account = cuenta(perfil, region)["account"]
+            if str(datos.get("confirmacion") or "").strip() != f"APLICAR EN {account}":
+                raise ErrorWeb(f"Para borrar para siempre escribe exactamente: APLICAR EN {account}")
+        hacer = ssm_web.restaurar if accion == "restaurar" else ssm_web.vaciar
+        return jsonify({"resultados": hacer(ssm(), nombres)})
 
     @app.post("/api/historial")
     def api_historial():

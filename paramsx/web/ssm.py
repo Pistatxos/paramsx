@@ -8,6 +8,7 @@ ese momento, aplicarlos e historial.
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
@@ -17,6 +18,14 @@ MAX_STANDARD, MAX_ADVANCED = 4096, 8192
 MAX_LISTADO = 2000  # parámetros como mucho por carga (el resto se avisa)
 MAX_CONTIENEN = 200  # al buscar por un trozo del nombre (cuando la ruta no existe)
 KMS_DEFECTO = ("alias/aws/ssm", "")
+# Papelera: lo que se borra se guarda antes, tal cual, bajo esta ruta del mismo SSM (mismo KMS y
+# mismos permisos de IAM: los valores nunca salen de AWS). Se recupera o se vacía desde 🗑 Papelera.
+PAPELERA = "/papelera"
+ETQ_PAPELERA = "xinfra:papelera-"  # de (nombre original), por, el, etiquetas (si no se pudieron leer)
+
+
+def en_papelera(nombre):
+    return str(nombre).startswith(PAPELERA + "/")
 NOMBRE = re.compile(r"^[A-Za-z0-9_.\-/]{1,2048}$")
 REINTENTOS_TOO_MANY_UPDATES = 2
 
@@ -234,6 +243,9 @@ def cargar(ssm, ruta):
         # La ruta entera no se deja (o un descifrado tumba la página): uno a uno
         valores = valores_por_nombre(ssm, sorted(meta))
 
+    if not en_papelera(ruta + "/"):  # cargar «/» (o una ruta de fuera) no trae lo de la papelera
+        meta = {n: m for n, m in meta.items() if not en_papelera(n)} if meta is not None else None
+        valores = {n: v for n, v in valores.items() if not en_papelera(n)}
     if not meta and not valores and ruta != "/":
         # el nombre exacto; sin carpeta, AWS trata «/Nombre» y «Nombre» como el mismo: primero sin
         # la barra (su nombre de verdad)
@@ -271,7 +283,7 @@ def _por_patron(ssm, patron):
     avisos = [f"Bajo {fija} hay más de {MAX_LISTADO}: solo se han mirado los {MAX_LISTADO} primeros; "
               "acota la parte de antes del «*»."] if len(meta) >= MAX_LISTADO else []
     regex = patron_regex(patron)
-    nombres = sorted(n for n in meta if regex.match(n))
+    nombres = sorted(n for n in meta if regex.match(n) and (not en_papelera(n) or en_papelera(patron)))
     if len(nombres) > MAX_CONTIENEN:
         avisos.append(f"Encajan {len(nombres)}: se muestran los {MAX_CONTIENEN} primeros; acota el patrón.")
         nombres = nombres[:MAX_CONTIENEN]
@@ -293,7 +305,7 @@ def _contienen(ssm, texto):
         return {}, {}, ""
     if not meta:
         return {}, {}, ""
-    nombres = sorted(meta)[:MAX_CONTIENEN]
+    nombres = sorted(n for n in meta if not en_papelera(n))[:MAX_CONTIENEN]
     meta = {n: meta[n] for n in nombres}
     try:
         valores = valores_por_nombre(ssm, nombres)
@@ -335,7 +347,8 @@ def explorar(ssm, prefijo="/", contiene=""):
             "Tu rol de IAM no puede listar parámetros (ssm:DescribeParameters)."
             if denegado(exc) else motivo(exc)
         ) from None
-    return {"nombres": sorted(meta), "limitado": len(meta) >= MAX_LISTADO}
+    return {"nombres": sorted(n for n in meta if not en_papelera(n) or en_papelera((prefijo or "") + "/")),
+            "limitado": len(meta) >= MAX_LISTADO}
 
 
 def historial(ssm, nombre):
@@ -447,6 +460,8 @@ def _revisar(ssm, items, cfg):
                 fila["avisos"].append("Pasa de 4 KB: se crea en el tier Advanced "
                                       "(0,05 USD al mes; no se puede volver a Standard).")
         elif accion in ("editar", "borrar"):
+            if accion == "borrar" and nombre not in viejos and not en_papelera(nombre):
+                fila["avisos"].append("Se guarda antes una copia en la papelera: se puede recuperar.")
             if not existe:
                 fila["errores"].append("Ya no existe en AWS.")
             elif v.get("bloqueado"):
@@ -516,10 +531,12 @@ def _put(ssm, **kw):
             time.sleep(1.5 * (intento + 1))
 
 
-def aplicar(ssm, items, cfg):
+def aplicar(ssm, items, cfg, por=""):
     """Aplica lo revisado. Se vuelve a comparar con AWS en el momento: lo que tenga errores
-    (conflicto, sin permiso...) no se toca y el resto se aplica. Devuelve
-    [{name, accion, ok, error, version, cambios}] sin valores."""
+    (conflicto, sin permiso...) no se toca y el resto se aplica. Lo que se borra se guarda antes en
+    la papelera (salvo los renombrados, que ya tienen su copia, y los que lleven «sin_papelera»: el
+    usuario aceptó borrarlos sin copia). Devuelve [{name, accion, ok, error, version, cambios}] sin
+    valores."""
     filas, meta = _revisar(ssm, items, cfg)
     revisado = {f["name"]: f for f in filas}
     resultados, borrar, sin_sustituto = [], [], set()
@@ -575,6 +592,19 @@ def aplicar(ssm, items, cfg):
                          if b["name"] in copia_de else "Recarga el grupo."))
         borrar.remove(b)
         resultados.append(b)
+
+    # Antes de borrar, una copia en la papelera; sin copia no se borra (el usuario decide)
+    sin_copia = {it.get("name") for it in items if it.get("accion") == "borrar" and it.get("sin_papelera")}
+    cuando = datetime.now(timezone.utc)
+    for b in [b for b in borrar if b["name"] not in copia_de and b["name"] not in sin_copia
+              and not en_papelera(b["name"])]:
+        try:
+            b["papelera"] = _a_papelera(ssm, b["name"], (ahora or meta or {}).get(b["name"], {}), por, cuando)
+        except (ClientError, BotoCoreError) as exc:
+            b["error"] = f"No se ha podido guardar una copia en la papelera ({motivo(exc)}): no se ha borrado."
+            b["sin_copia"] = True
+            borrar.remove(b)
+            resultados.append(b)
 
     # Borrados de 10 en 10 (el máximo de DeleteParameters)
     for i in range(0, len(borrar), 10):
@@ -639,3 +669,117 @@ def _aplicar_uno(ssm, it, fila, m, accion):
         ssm.remove_tags_from_resource(ResourceType="Parameter", ResourceId=it["name"],
                                       TagKeys=fila["tags_quitar"])
     return version
+
+
+# ---------------------------------------------------------------- papelera
+
+def nombre_papelera(nombre, cuando):
+    """/papelera/<fecha>/<nombre original>. SSM admite 15 niveles: si no cabe, el original va en un
+    solo nivel (con «~»)."""
+    rel = "/" + nombre.lstrip("/")
+    base = f"{PAPELERA}/{cuando:%Y-%m-%dT%H-%M-%S}"
+    if (base + rel).count("/") > 15:
+        rel = "/" + nombre.strip("/").replace("/", "~")
+    return base + rel
+
+
+def _a_papelera(ssm, nombre, m, por, cuando):
+    """Copia exacta (valor, tipo, descripción, etiquetas, clave KMS, tier) en la papelera."""
+    p = ssm.get_parameter(Name=nombre, WithDecryption=True)["Parameter"]
+    try:
+        tags = [t for t in ssm.list_tags_for_resource(ResourceType="Parameter", ResourceId=nombre).get("TagList", [])
+                if not t["Key"].startswith("aws:") and not t["Key"].startswith(ETQ_PAPELERA)]
+    except ClientError:
+        tags = None  # sin permiso para leerlas: se guarda igual el valor, que es lo importante
+    etiquetas = (tags or [])[:45] + [{"Key": ETQ_PAPELERA + "por", "Value": (por or "—")[:256]},
+                                     {"Key": ETQ_PAPELERA + "el", "Value": cuando.strftime("%Y-%m-%dT%H:%M:%SZ")}]
+    if len(nombre) <= 256:
+        etiquetas.append({"Key": ETQ_PAPELERA + "de", "Value": nombre})
+    if tags is None:
+        etiquetas.append({"Key": ETQ_PAPELERA + "etiquetas", "Value": "no se pudieron leer"})
+    destino = nombre_papelera(nombre, cuando)
+    kw = {"Name": destino, "Value": p["Value"], "Type": p["Type"], "Overwrite": False, "Tags": etiquetas}
+    if m.get("description"):
+        kw["Description"] = m["description"]
+    if p["Type"] == "SecureString" and m.get("key_id") and m["key_id"] not in KMS_DEFECTO:
+        kw["KeyId"] = m["key_id"]
+    if m.get("tier") == "Advanced" or len(p["Value"].encode("utf-8")) > MAX_STANDARD:
+        kw["Tier"] = "Advanced"
+    if m.get("data_type") and m["data_type"] != "text":
+        kw["DataType"] = m["data_type"]
+    _put(ssm, **kw)
+    return destino
+
+
+def _original(nombre, tags):
+    if (tags or {}).get(ETQ_PAPELERA + "de"):
+        return tags[ETQ_PAPELERA + "de"]
+    rel = nombre.split("/", 3)[3] if nombre.count("/") >= 3 else nombre
+    return "/" + rel.replace("~", "/")
+
+
+def papelera(ssm):
+    """Lo que hay en la papelera (sin valores), lo más reciente primero."""
+    try:
+        meta = describir(ssm, PAPELERA)
+    except ClientError as exc:
+        raise ParametrosError("Tu rol de IAM no puede listar parámetros (ssm:DescribeParameters)."
+                              if denegado(exc) else motivo(exc)) from None
+    tags = etiquetas(ssm, sorted(meta))
+    filas = [{"nombre": n, "original": _original(n, tags.get(n)), "por": (tags.get(n) or {}).get(ETQ_PAPELERA + "por", ""),
+              "el": (tags.get(n) or {}).get(ETQ_PAPELERA + "el", "") or m.get("modified", ""), "tipo": m.get("type"),
+              "sin_etiquetas": bool((tags.get(n) or {}).get(ETQ_PAPELERA + "etiquetas"))}
+             for n, m in meta.items()]
+    return sorted(filas, key=lambda f: f["el"], reverse=True)
+
+
+def restaurar(ssm, nombres):
+    """Vuelve a crear cada uno en su sitio, tal cual, y lo quita de la papelera. Si el original ya
+    existe, no se pisa."""
+    out = []
+    for n in nombres:
+        res = {"nombre": n, "ok": False, "error": ""}
+        try:
+            if not en_papelera(n):
+                raise ParametrosError("No está en la papelera.")
+            p = ssm.get_parameter(Name=n, WithDecryption=True)["Parameter"]
+            m = describir(ssm, "", [n]).get(n, {})
+            tags = {t["Key"]: t["Value"] for t in ssm.list_tags_for_resource(ResourceType="Parameter", ResourceId=n).get("TagList", [])}
+            original = res["original"] = _original(n, tags)
+            if ssm.get_parameters(Names=[original], WithDecryption=False).get("Parameters"):
+                raise ParametrosError(f"{original} ya existe: no se pisa. Cámbiale el nombre o bórralo antes.")
+            kw = {"Name": original, "Value": p["Value"], "Type": p["Type"], "Overwrite": False}
+            propias = [{"Key": k, "Value": v} for k, v in tags.items() if not k.startswith(ETQ_PAPELERA) and not k.startswith("aws:")]
+            if propias:
+                kw["Tags"] = propias
+            if m.get("description"):
+                kw["Description"] = m["description"]
+            if p["Type"] == "SecureString" and m.get("key_id") and m["key_id"] not in KMS_DEFECTO:
+                kw["KeyId"] = m["key_id"]
+            if m.get("tier") == "Advanced":
+                kw["Tier"] = "Advanced"
+            if m.get("data_type") and m["data_type"] != "text":
+                kw["DataType"] = m["data_type"]
+            _put(ssm, **kw)
+            ssm.delete_parameter(Name=n)
+            res["ok"] = True
+        except ParametrosError as exc:
+            res["error"] = str(exc)
+        except (ClientError, BotoCoreError) as exc:
+            res["error"] = motivo(exc)
+        out.append(res)
+    return out
+
+
+def vaciar(ssm, nombres):
+    """Borra para siempre de la papelera (solo nombres de dentro de la papelera)."""
+    out, nombres = [], [n for n in nombres if en_papelera(n)]
+    for i in range(0, len(nombres), 10):
+        lote = nombres[i:i + 10]
+        try:
+            r = ssm.delete_parameters(Names=lote)
+            hechos = set(r.get("DeletedParameters", []))
+            out += [{"nombre": n, "ok": n in hechos, "error": "" if n in hechos else "Ya no estaba."} for n in lote]
+        except ClientError as exc:
+            out += [{"nombre": n, "ok": False, "error": motivo(exc)} for n in lote]
+    return out

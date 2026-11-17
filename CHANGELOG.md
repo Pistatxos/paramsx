@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.11
+
+### Añadido
+
+- **🗑 Papelera**: lo que borras desde la web **no se pierde**. Justo antes de borrarlo se guarda una copia exacta (valor, tipo, descripción, etiquetas y clave KMS) en `/papelera/<fecha>/<nombre original>` **del mismo SSM**: los valores no salen de AWS y la ve todo el equipo. Desde **🗑 Papelera** (junto a Explorar) se **restaura** en su sitio, tal cual (si ya existe otro con ese nombre, no se pisa), o se **borra para siempre** (pide `APLICAR EN <cuenta>`). Se guarda hasta que la vacíes; no sale en Explorar, en las búsquedas ni al cargar `/`.
+- Si el rol no puede escribir en `/papelera/*`, **no se borra** y lo dice; puedes elegir «Borrarlos sin copia…». Renombrar no pasa por la papelera (el nuevo ya es la copia). No se guarda el historial de versiones (SSM no deja copiarlo).
+
 ## 2.5.10
 
 ### Cambiado
