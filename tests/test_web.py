@@ -543,3 +543,16 @@ def test_ruta_con_patron(cliente, ssm):
         ["/DEV/rds/a/host", "/dev/rds/cee/host", "/dev/rds/core/host"], "/rds/*/host", True)
     rutas = [f["Values"][0] for kw in ssm.ops("DescribeParameters") for f in kw.get("ParameterFilters", []) if f["Key"] == "Path"]
     assert {"/dev/rds", "/dev/nada", "/dev"} <= set(rutas)  # solo se lista la parte fija (y «/rds» antes de buscar en cualquier nivel)
+
+
+def test_patron_con_parametros_en_la_raiz_y_en_varios_entornos(cliente, ssm):
+    # Un patrón se busca desde su ruta (no se amplía sin avisar); con /**/ delante, en cualquier nivel
+    for n in ("/rds/cee/host", "/dev/rds/core/host", "/prod/rds/core/host", "/dev/rds/core/x/host"):
+        ssm.poner(n, "v", tipo="String")
+    buscar = lambda ruta: cliente.post("/api/cargar", json={"ruta": ruta}).get_json()
+    r = buscar("/rds/*/host")
+    assert ([p["name"] for p in r["parametros"]], r.get("cualquier_nivel")) == (["/rds/cee/host"], None)
+    assert [p["name"] for p in buscar("/dev/rds/*/host")["parametros"]] == ["/dev/rds/core/host"]
+    r = buscar("/**/rds/*/host")
+    assert [p["name"] for p in r["parametros"]] == ["/dev/rds/core/host", "/prod/rds/core/host", "/rds/cee/host"]
+    assert r["patron"] == "/**/rds/*/host" and not r.get("cualquier_nivel")

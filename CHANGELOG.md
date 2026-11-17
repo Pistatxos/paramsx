@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.10
+
+### Cambiado
+
+- **Un patrón se busca desde su ruta y ahora se ve que hay otra opción.** Con resultados desde la ruta escrita (`/rds/*/host` con `/rds/cee/host` en la raíz), la línea de estado ofrece **«buscar en cualquier nivel»**, que lo repite con `/**/` delante (`/**/rds/*/host`: también `/dev/rds/…`, `/prod/rds/…`). No se amplía nada sin avisar: si desde la ruta escrita no encaja nada, se sigue buscando en cualquier nivel como hasta ahora, y lo dice.
+
+### Corregido
+
+- **«↻ Recargar» tras buscar con un patrón** volvía a leer toda la parte fija (`/dev/rds` entera) en vez del patrón.
+
 ## 2.5.9
 
 ### Corregido

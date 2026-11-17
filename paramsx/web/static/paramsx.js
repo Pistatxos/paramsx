@@ -78,8 +78,10 @@
   }
   // ↻ Recargar: vuelve a leer de AWS lo que hay cargado
   $('pEstado').addEventListener('click', e => {
-    if (!e.target.closest('[data-recargar]') || !salirSinGuardar()) return;
-    $('pRuta').value = S.ruta; S.items = []; cargar();
+    // Un patrón se busca desde su ruta; «buscar en cualquier nivel» lo repite con /**/ delante (p. ej. en cada entorno)
+    const otros = e.target.closest('[data-otros-niveles]');
+    if (!(otros || e.target.closest('[data-recargar]')) || !salirSinGuardar()) return;
+    $('pRuta').value = otros ? '/**' + S.cargada : (S.cargada || S.ruta); S.items = []; cargar();
   });
 
   // ------------------------------------------------ buscador de rutas (solo nombres, como «Buscar en la cuenta» de Ajustes)
@@ -183,9 +185,10 @@
     try {
       const r = await post('/api/cargar', { ruta });
       S.ruta = r.patron ? (r.patron.split('*')[0].replace(/\/[^/]*$/, '') || '/') : r.ruta;  // con patrón, «+ Nuevo» parte de lo fijo
+      S.cargada = r.patron || r.ruta;  // lo que se vuelve a leer con ↻ Recargar
       S.items = r.parametros.map(p => ({ ...p, tags: p.tags ? { ...p.tags } : null, orig: { ...p, tags: p.tags ? { ...p.tags } : null }, borrar: false, nuevo: false, ver: false }));
       const bloqueados = S.items.filter(p => p.bloqueado).length;
-      $('pEstado').innerHTML = `${r.patron ? `Patrón <b>«${esc(r.patron)}»</b>${r.cualquier_nivel ? ' en cualquier nivel' : ''} · ${S.items.length} ${S.items.length === 1 ? 'encaja' : 'encajan'}` : r.buscado ? `Buscado <b>«${esc(r.buscado)}»</b> · ${S.items.length} ${S.items.length === 1 ? 'parámetro lo lleva' : 'parámetros lo llevan'} en el nombre` : `<b>${esc(r.ruta)}</b> · ${S.items.length} par`}${bloqueados ? ` · 🔒 ${bloqueados} sin permiso` : ''}${r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('')} · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>`;
+      $('pEstado').innerHTML = `${r.patron ? `Patrón <b>«${esc(r.patron)}»</b>${r.cualquier_nivel ? ' en cualquier nivel' : ''} · ${S.items.length} ${S.items.length === 1 ? 'encaja' : 'encajan'}${r.patron && !r.cualquier_nivel && !r.patron.startsWith('/**') ? ` · <button type="button" class="enlace" data-otros-niveles title="Solo se ha buscado desde ${esc(r.patron.split('*')[0].replace(/\/[^/]*$/, '') || '/')}. Con /**/ delante se busca en cualquier nivel (p. ej. en cada entorno).">buscar en cualquier nivel</button>` : ''}` : r.buscado ? `Buscado <b>«${esc(r.buscado)}»</b> · ${S.items.length} ${S.items.length === 1 ? 'parámetro lo lleva' : 'parámetros lo llevan'} en el nombre` : `<b>${esc(r.ruta)}</b> · ${S.items.length} par`}${bloqueados ? ` · 🔒 ${bloqueados} sin permiso` : ''}${r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('')} · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>`;
       $('pBarra').hidden = false; pintar();
     } catch (e) {
       $('pEstado').innerHTML = `<span class="error">${esc(e.message)}</span>`; S.items = []; S.ruta = '';
