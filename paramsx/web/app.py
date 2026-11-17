@@ -379,9 +379,6 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
         account = cuenta(perfil, region)["account"]
         if str(datos.get("confirmacion") or "").strip() != f"APLICAR EN {account}":
             raise ErrorWeb(f"Para aplicar escribe exactamente: APLICAR EN {account}")
-        borrados = sum(1 for it in items if it.get("accion") == "borrar")
-        if borrados and str(datos.get("borrados") or "").strip() != str(borrados):
-            raise ErrorWeb(f"Se van a borrar {borrados}: escribe {borrados} para confirmarlo.")
         por = cuenta(perfil, region)["arn"].rsplit("/", 1)[-1]  # quién borra, para la papelera
         return jsonify({"resultados": ssm_web.aplicar(ssm(), items, config_activa(), por=por)})
 

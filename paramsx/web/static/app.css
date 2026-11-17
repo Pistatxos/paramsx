@@ -315,3 +315,8 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .papelera-lista .plan-fila small { display: block; margin-top: 2px; }
 .papelera-lista input[type=checkbox], .papelera-todos input[type=checkbox] { width: auto; margin: 3px 0 0; flex: none; }
 .papelera-todos { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; margin: 6px 0; }
+.confirmar .papelera-check { flex-direction: row; align-items: center; gap: 8px; font-size: 12.5px; }
+.confirmar .papelera-check input { width: auto; margin: 0; }
+.confirmar .confirmar-frase { flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.confirmar .confirmar-frase > span { white-space: nowrap; }
+.confirmar .confirmar-frase input { flex: 1; min-width: 220px; max-width: none; }

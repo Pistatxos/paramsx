@@ -461,7 +461,7 @@ def _revisar(ssm, items, cfg):
                                       "(0,05 USD al mes; no se puede volver a Standard).")
         elif accion in ("editar", "borrar"):
             if accion == "borrar" and nombre not in viejos and not en_papelera(nombre):
-                fila["avisos"].append("Se guarda antes una copia en la papelera: se puede recuperar.")
+                fila["papelera"] = True  # la revisión ofrece guardar copia (casilla marcada)
             if not existe:
                 fila["errores"].append("Ya no existe en AWS.")
             elif v.get("bloqueado"):

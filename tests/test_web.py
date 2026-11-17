@@ -230,11 +230,9 @@ def test_aplicar_borra_de_10_en_10_y_pide_confirmacion(cliente, ssm):
         ssm.poner(f"/dev/app/p{i:02}", "v")
     ps = cargar(cliente)
     items = [item(p, accion="borrar") for p in ps.values()]
-    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": CONFIRMA, "borrados": "24"})
+    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": "APLICAR EN 999"})
     assert r.status_code == 400 and ssm.ops("DeleteParameters") == []
-    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": "APLICAR EN 999", "borrados": "25"})
-    assert r.status_code == 400
-    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": CONFIRMA, "borrados": "25"}).get_json()
+    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": CONFIRMA}).get_json()  # basta la cuenta
     assert all(x["ok"] for x in r["resultados"])
     assert all(n.startswith("/papelera/") for n in ssm.params) and len(ssm.params) == 25  # quedan sus copias en la papelera
     assert [len(kw["Names"]) for kw in ssm.ops("DeleteParameters")] == [10, 10, 5]
@@ -571,7 +569,7 @@ def test_borrar_guarda_copia_en_la_papelera_y_se_restaura_tal_cual(cliente, ssm)
     ssm.poner("/dev/app/db", "secreto", descripcion="Clave BD", tags=TAGS, key_id=clave)
     p = cargar(cliente)["/dev/app/db"]
     plan = cliente.post("/api/plan", json={"items": [item(p, accion="borrar")]}).get_json()["plan"]
-    assert "papelera" in " ".join(plan[0]["avisos"])
+    assert plan[0]["papelera"]  # la revisión ofrece guardar copia
     r = borrar(cliente, p)
     assert r["ok"], r
     assert "/dev/app/db" not in ssm.params

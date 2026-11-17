@@ -379,7 +379,7 @@
     modal.abrir('<h2>Revisar cambios</h2><p>Comparando con AWS en este momento…</p>');
     let r;
     try { r = await post('/api/plan', { items }); } catch (e) { return modal.abrir(`<h2>Revisar cambios</h2><p class="error">${esc(e.message)}</p>`); }
-    const validos = r.plan.filter(f => !f.errores.length), borrados = validos.filter(f => f.accion === 'borrar').length;
+    const validos = r.plan.filter(f => !f.errores.length), papelera = validos.filter(f => f.papelera).length;
     const conflictos = r.plan.filter(f => f.conflicto).length;
     const frase = `APLICAR EN ${r.account}`;
     modal.abrir(`<h2>Revisar cambios</h2><p>Comparado con lo que hay ahora en AWS, en la cuenta <b>${esc(r.account)}</b> · ${esc(r.region_name)}.${r.plan.length - validos.length ? ` <span class="warn">${r.plan.length - validos.length} no se aplicarán (ver motivo).</span>` : ''}${conflictos ? ' <b class="error">Hay conflictos: recarga el grupo para ver lo que hay ahora.</b>' : ''}</p>
@@ -390,20 +390,22 @@
         ${f.cambios.includes('valor') && f.accion === 'editar' ? `<details><summary>Ver el valor antes y después</summary><div class="diff"><div><small>Ahora en AWS</small><pre>${esc(f.antes ?? '')}</pre></div><div><small>Después</small><pre>${esc(actual.value ?? '')}</pre></div></div></details>` : ''}
         ${f.tags_poner && Object.keys(f.tags_poner).length ? `<small>Etiquetas: ${Object.entries(f.tags_poner).map(([k, v]) => `${esc(k)}=${esc(v)}`).join(', ')}</small>` : ''}${f.tags_quitar && f.tags_quitar.length ? `<small>Quitar etiquetas: ${f.tags_quitar.map(esc).join(', ')}</small>` : ''}</div>`;
       }).join('')}</div>
-      ${validos.length ? `<div class="confirmar"><label>Para aplicar, escribe <code>${esc(frase)}</code><input id="pConfirma" ${NOFILL}></label>${borrados ? `<label class="warn">Se van a borrar ${borrados}: escribe <b>${borrados}</b><input id="pBorrados" inputmode="numeric" ${NOFILL}></label>` : ''}
+      ${validos.length ? `<div class="confirmar">${papelera ? `<label class="papelera-check"><input type="checkbox" id="pGuardarPapelera" checked> 🗑 Guardar copia en la papelera ${papelera === 1 ? 'del que se borra' : `de los ${papelera} que se borran`} <span class="muted">· se puede recuperar</span></label>` : ''}
+        <label class="confirmar-frase"><span>Para aplicar, escribe <code>${esc(frase)}</code></span><input id="pConfirma" ${NOFILL}></label>
         <div class="acciones"><button type="button" class="primario" id="pAplicar" disabled>Aplicar ${validos.length} ${validos.length === 1 ? 'cambio' : 'cambios'}</button><button type="button" class="secundario" id="pSeguir">Seguir editando</button>${conflictos ? '<button type="button" class="secundario" id="pRecargar">Recargar el grupo</button>' : ''}</div></div>`
       : `<div class="acciones"><button type="button" class="secundario" id="pSeguir">Seguir editando</button>${conflictos ? '<button type="button" class="secundario" id="pRecargar">Recargar el grupo</button>' : ''}</div>`}`);
     $('pSeguir').onclick = modal.cerrar;
     if ($('pRecargar')) $('pRecargar').onclick = () => { if (confirm('Recargar el grupo descarta tus cambios sin aplicar. ¿Seguir?')) { modal.cerrar(); S.items = []; cargar(); } };
     if (!$('pAplicar')) return;
-    const listo = () => { $('pAplicar').disabled = $('pConfirma').value.trim() !== frase || (borrados && ($('pBorrados') || {}).value.trim() !== String(borrados)); };
-    $('pConfirma').addEventListener('input', listo); if ($('pBorrados')) $('pBorrados').addEventListener('input', listo);
+    const listo = () => { $('pAplicar').disabled = $('pConfirma').value.trim() !== frase; };
+    $('pConfirma').addEventListener('input', listo);
     $('pConfirma').focus();
     $('pAplicar').onclick = async () => {
       $('pAplicar').disabled = true; $('pAplicar').textContent = 'Aplicando…';
-      const enviar = items.filter(it => validos.some(v => v.name === it.name));
+      const sinCopia = $('pGuardarPapelera') && !$('pGuardarPapelera').checked;  // casilla de la papelera desmarcada
+      const enviar = items.filter(it => validos.some(v => v.name === it.name)).map(it => sinCopia && it.accion === 'borrar' ? { ...it, sin_papelera: true } : it);
       try {
-        const res = await post('/api/aplicar', { items: enviar, confirmacion: $('pConfirma').value.trim(), borrados: $('pBorrados') ? $('pBorrados').value.trim() : '' });
+        const res = await post('/api/aplicar', { items: enviar, confirmacion: $('pConfirma').value.trim() });
         const ok = res.resultados.filter(x => x.ok).length, mal = res.resultados.filter(x => !x.ok);
         modal.abrir(`<h2>${mal.length ? 'Aplicado en parte' : 'Aplicado'}</h2><p>${ok} de ${res.resultados.length} cambios hechos en AWS. El grupo se ha vuelto a cargar.</p>${mal.length ? `<div class="plan">${mal.map(x => `<div class="plan-fila mal"><code>${esc(x.name)}</code><small class="error">${esc(x.error)}</small></div>`).join('')}</div>` : ''}<div class="acciones"><button type="button" class="primario" id="pSeguir">Cerrar</button>${mal.some(x => x.sin_copia) ? '<button type="button" class="secundario peligro" id="pSinCopia" title="Se borran sin guardar copia: no se podrán recuperar">Borrarlos sin copia…</button>' : ''}</div>`);
         $('pSeguir').onclick = modal.cerrar;

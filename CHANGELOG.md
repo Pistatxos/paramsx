@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.5.12
+
+### Cambiado
+
+- **Revisar cambios, más claro y compacto**: si hay borrados, una casilla **🗑 Guardar copia en la papelera** (marcada) en vez de un aviso por cada uno; desmárcala solo si no quieres poder recuperarlos. La confirmación va en una línea.
+- **Ya no se pide escribir cuántos se borran**: basta `APLICAR EN <cuenta>` (lo borrado va a la papelera).
+
 ## 2.5.11
 
 ### Añadido
