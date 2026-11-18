@@ -577,7 +577,7 @@ def test_borrar_guarda_copia_en_la_papelera_y_se_restaura_tal_cual(cliente, ssm)
     assert r["papelera"].startswith("/papelera/") and r["papelera"].endswith("/dev/app/db")
     assert (copia["value"], copia["description"], copia["key_id"]) == ("secreto", "Clave BD", clave)
     assert {k: v for k, v in copia["tags"].items() if not k.startswith("xinfra:")} == TAGS
-    assert copia["tags"]["xinfra:papelera-de"] == "/dev/app/db"
+    assert copia["tags"]["xinfra:papelera"].count(" · ") == 1  # cuándo · quién, en una sola etiqueta
     # no sale al cargar «/» ni al explorar; sí en la papelera, sin valores
     assert r["papelera"] not in cargar(cliente, "/")
     assert r["papelera"] not in cliente.get("/api/explorar").get_json()["nombres"]
@@ -621,3 +621,27 @@ def test_renombrar_no_pasa_por_la_papelera(cliente, ssm):
                                            "confirmacion": CONFIRMA, "borrados": "1"}).get_json()
     assert all(x["ok"] for x in r["resultados"]), r
     assert not [n for n in ssm.params if n.startswith("/papelera/")]
+
+
+def test_con_50_etiquetas_la_copia_y_la_restauracion_las_conservan_todas(cliente, ssm):
+    tags = {f"T{i:02}": f"v{i}" for i in range(50)}
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=tags)
+    r = borrar(cliente, cargar(cliente)["/dev/app/url"])
+    assert r["ok"], r
+    assert ssm.params[r["papelera"]]["tags"] == tags  # todas; no cabe la marca y no hace falta
+    assert cliente.get("/api/papelera").get_json()["filas"][0]["original"] == "/dev/app/url"
+    res = cliente.post("/api/papelera/restaurar", json={"nombres": [r["papelera"]]}).get_json()["resultados"][0]
+    assert res["ok"], res
+    assert (ssm.params["/dev/app/url"]["value"], ssm.params["/dev/app/url"]["tags"]) == ("https://x", tags)
+
+
+def test_sin_poder_leer_las_etiquetas_no_se_borra_con_papelera(cliente, ssm):
+    ssm.poner("/dev/app/db", "secreto", descripcion="Clave BD", tags=TAGS)
+    p = cargar(cliente)["/dev/app/db"]
+    ssm.tags_denegadas.add("/dev/app/db")
+    antes = dict(ssm.params["/dev/app/db"])
+    r = borrar(cliente, p)
+    assert not r["ok"] and r["sin_copia"] and "ssm:ListTagsForResource" in r["error"]
+    assert ssm.params["/dev/app/db"] == antes  # el original, intacto
+    assert not [n for n in ssm.params if n.startswith("/papelera/")]  # y ninguna copia a medias
+    assert borrar(cliente, p, sin_papelera=True)["ok"]  # sin copia, si se acepta

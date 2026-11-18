@@ -21,7 +21,8 @@ KMS_DEFECTO = ("alias/aws/ssm", "")
 # Papelera: lo que se borra se guarda antes, tal cual, bajo esta ruta del mismo SSM (mismo KMS y
 # mismos permisos de IAM: los valores nunca salen de AWS). Se recupera o se vacía desde 🗑 Papelera.
 PAPELERA = "/papelera"
-ETQ_PAPELERA = "xinfra:papelera-"  # de (nombre original), por, el, etiquetas (si no se pudieron leer)
+ETQ_PAPELERA_BASE = "xinfra:papelera"  # la marca de cada copia: «<cuándo> · <quién>»
+ETQ_PAPELERA = ETQ_PAPELERA_BASE + "-"  # las de las primeras copias (de, por, el): se siguen leyendo
 
 
 def en_papelera(nombre):
@@ -600,8 +601,9 @@ def aplicar(ssm, items, cfg, por=""):
               and not en_papelera(b["name"])]:
         try:
             b["papelera"] = _a_papelera(ssm, b["name"], (ahora or meta or {}).get(b["name"], {}), por, cuando)
-        except (ClientError, BotoCoreError) as exc:
-            b["error"] = f"No se ha podido guardar una copia en la papelera ({motivo(exc)}): no se ha borrado."
+        except (ClientError, BotoCoreError, ParametrosError) as exc:  # sin copia completa no se borra
+            detalle = exc if isinstance(exc, ParametrosError) else motivo(exc)
+            b["error"] = f"No se ha podido guardar una copia completa en la papelera ({detalle}): no se ha borrado."
             b["sin_copia"] = True
             borrar.remove(b)
             resultados.append(b)
@@ -684,21 +686,23 @@ def nombre_papelera(nombre, cuando):
 
 
 def _a_papelera(ssm, nombre, m, por, cuando):
-    """Copia exacta (valor, tipo, descripción, etiquetas, clave KMS, tier) en la papelera."""
+    """Copia exacta (valor, tipo, descripción, todas las etiquetas, clave KMS, tier) en la papelera. Devuelve su
+    nombre. Si no se pueden leer las etiquetas, ParametrosError: sin copia completa no se borra."""
     p = ssm.get_parameter(Name=nombre, WithDecryption=True)["Parameter"]
     try:
         tags = [t for t in ssm.list_tags_for_resource(ResourceType="Parameter", ResourceId=nombre).get("TagList", [])
-                if not t["Key"].startswith("aws:") and not t["Key"].startswith(ETQ_PAPELERA)]
-    except ClientError:
-        tags = None  # sin permiso para leerlas: se guarda igual el valor, que es lo importante
-    etiquetas = (tags or [])[:45] + [{"Key": ETQ_PAPELERA + "por", "Value": (por or "—")[:256]},
-                                     {"Key": ETQ_PAPELERA + "el", "Value": cuando.strftime("%Y-%m-%dT%H:%M:%SZ")}]
-    if len(nombre) <= 256:
-        etiquetas.append({"Key": ETQ_PAPELERA + "de", "Value": nombre})
-    if tags is None:
-        etiquetas.append({"Key": ETQ_PAPELERA + "etiquetas", "Value": "no se pudieron leer"})
+                if not t["Key"].startswith("aws:") and not t["Key"].startswith(ETQ_PAPELERA_BASE)]
+    except ClientError as exc:
+        raise ParametrosError("no se pueden leer sus etiquetas (falta el permiso ssm:ListTagsForResource)"
+                              if denegado(exc) else motivo(exc)) from None
+    # Todas las suyas (SSM admite 50). La marca de la papelera (cuándo y quién) es una sola, y solo si cabe:
+    # el nombre original ya va en la ruta de la copia
+    marca = f"{cuando:%Y-%m-%dT%H:%M:%SZ} · {por or '—'}"[:256]
+    etiquetas = tags + ([{"Key": ETQ_PAPELERA_BASE, "Value": marca}] if len(tags) < 50 else [])
     destino = nombre_papelera(nombre, cuando)
-    kw = {"Name": destino, "Value": p["Value"], "Type": p["Type"], "Overwrite": False, "Tags": etiquetas}
+    kw = {"Name": destino, "Value": p["Value"], "Type": p["Type"], "Overwrite": False}
+    if etiquetas:
+        kw["Tags"] = etiquetas
     if m.get("description"):
         kw["Description"] = m["description"]
     if p["Type"] == "SecureString" and m.get("key_id") and m["key_id"] not in KMS_DEFECTO:
@@ -726,8 +730,12 @@ def papelera(ssm):
         raise ParametrosError("Tu rol de IAM no puede listar parámetros (ssm:DescribeParameters)."
                               if denegado(exc) else motivo(exc)) from None
     tags = etiquetas(ssm, sorted(meta))
-    filas = [{"nombre": n, "original": _original(n, tags.get(n)), "por": (tags.get(n) or {}).get(ETQ_PAPELERA + "por", ""),
-              "el": (tags.get(n) or {}).get(ETQ_PAPELERA + "el", "") or m.get("modified", ""), "tipo": m.get("type"),
+    def marca(n):  # (cuándo, quién): la marca de ahora o las de las primeras copias
+        t = tags.get(n) or {}
+        el, _, por = t.get(ETQ_PAPELERA_BASE, "").partition(" · ")
+        return el or t.get(ETQ_PAPELERA + "el", ""), por or t.get(ETQ_PAPELERA + "por", "")
+    filas = [{"nombre": n, "original": _original(n, tags.get(n)), "por": marca(n)[1],
+              "el": marca(n)[0] or m.get("modified", ""), "tipo": m.get("type"),
               "sin_etiquetas": bool((tags.get(n) or {}).get(ETQ_PAPELERA + "etiquetas"))}
              for n, m in meta.items()]
     return sorted(filas, key=lambda f: f["el"], reverse=True)
@@ -749,7 +757,7 @@ def restaurar(ssm, nombres):
             if ssm.get_parameters(Names=[original], WithDecryption=False).get("Parameters"):
                 raise ParametrosError(f"{original} ya existe: no se pisa. Cámbiale el nombre o bórralo antes.")
             kw = {"Name": original, "Value": p["Value"], "Type": p["Type"], "Overwrite": False}
-            propias = [{"Key": k, "Value": v} for k, v in tags.items() if not k.startswith(ETQ_PAPELERA) and not k.startswith("aws:")]
+            propias = [{"Key": k, "Value": v} for k, v in tags.items() if not k.startswith(ETQ_PAPELERA_BASE) and not k.startswith("aws:")]
             if propias:
                 kw["Tags"] = propias
             if m.get("description"):

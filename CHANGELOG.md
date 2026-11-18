@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.14
+
+### Corregido
+
+- **La copia de la papelera ya no pierde etiquetas.** Antes guardaba como mucho 45 (para dejar sitio a tres marcas internas) y, si el rol no podía leerlas, hacía la copia sin ellas y borraba el original. Ahora la copia lleva **todas** (hasta las 50 que admite SSM); la marca de la papelera (cuándo y quién) es una sola etiqueta y solo si cabe, porque el nombre original ya va en la ruta. **Si no se pueden leer las etiquetas, no se borra** y se dice que falta `ssm:ListTagsForResource` (se puede elegir «Borrarlos sin copia…»). Las copias anteriores se siguen leyendo y restaurando.
+
 ## 2.5.13
 
 ### Cambiado
