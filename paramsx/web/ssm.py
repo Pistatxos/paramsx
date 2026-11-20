@@ -448,6 +448,9 @@ def validar_item(it, cfg):
                 if not k or len(k) > 128 or len(str(v)) > 256 or k.lower().startswith("aws:"):
                     errores.append(f"Etiqueta «{k}» no válida (clave hasta 128, valor hasta 256, "
                                    "sin «aws:»).")
+                elif _NO_EN_ETIQUETA.search(k) or _NO_EN_ETIQUETA.search(str(v)):
+                    errores.append(f"La etiqueta «{k}» lleva caracteres que AWS no admite (solo letras, números, "
+                                   "espacios y _ . : / = + - @).")
     if it.get("accion") == "nuevo" and cfg.get("tags_activas") and not cfg.get("obligatorias_vacias"):
         faltan = [k for k in cfg.get("tags_obligatorias", []) if not str((tags or {}).get(k, "")).strip()]
         if faltan:
@@ -710,7 +713,7 @@ def _aplicar_uno(ssm, it, fila, m, accion):
 # ---------------------------------------------------------------- papelera
 
 # Lo que AWS admite en el valor de una etiqueta (letras, números, espacios y _ . : / = + - @); lo demás se quita
-_NO_EN_ETIQUETA = re.compile(r"[^\w .:/=+\-@]")
+_NO_EN_ETIQUETA = re.compile(r"[^\w\s.:/=+\-@]")
 
 
 def usuario_aws(arn):

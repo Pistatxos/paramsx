@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.17
+
+### Añadido
+
+- **🏷 Poner etiquetas**, en «Reemplazar…»: una o varias `clave = valor` (vienen las obligatorias) en muchos parámetros a la vez, **solo donde falta o está vacía** o **en todos**. Se ve la tabla de antes → después, se desmarca lo que no se quiera y va al editor; luego «Revisar cambios» como siempre. Avisa de lo que AWS no admite (caracteres, longitudes, `aws:`) y salta los que ya tienen 50 etiquetas o cuyas etiquetas no se pueden leer.
+- «Reemplazar…» (las dos pestañas) actúa **en los marcados** si hay alguno con ☑ Marcar; si no, en los que se ven.
+
+### Corregido
+
+- «Revisar cambios» da error si una etiqueta lleva caracteres que AWS no admite (antes fallaba al aplicar).
+- Con más de 2000 cambios a la vez decía «No hay cambios que revisar»; ahora dice cuántos son y el máximo. Restaurar o vaciar más de 200 de la papelera va en bloques.
+
 ## 2.5.16
 
 ### Añadido

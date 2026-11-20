@@ -562,9 +562,16 @@
     const ini = Math.max(0, m - 35); return (ini ? '…' : '') + t.slice(ini, ini + 90) + (ini + 90 < t.length ? '…' : '');
   };
   const visibles = () => [...$('pLista').querySelectorAll('.param:not([hidden])')].map(c => +c.dataset.i);
+  // Dónde actúa «Reemplazar…»: en los marcados si hay (con ☑ Marcar), si no en los que se ven (con el filtro)
+  function ambito() {
+    const m = S.marcando ? marcados() : [];
+    if (m.length) return { idx: m, texto: m.length === 1 ? 'el parámetro marcado' : `los ${m.length} parámetros marcados` };
+    const v = visibles();
+    return { idx: v, texto: `los ${v.length} parámetros que ves ahora${$('pFiltro').value.trim() ? ' (con el filtro)' : ''}` };
+  }
   function coincidencias(buscar, por, donde, mayus) {
     const reT = new RegExp(escRe(buscar), mayus ? '' : 'i'), reG = new RegExp(escRe(buscar), mayus ? 'g' : 'gi'), out = [];
-    for (const i of visibles()) {
+    for (const i of ambito().idx) {
       const p = S.items[i]; if (!p || p.bloqueado || p.borrar) continue;
       const mira = (campo, clave, antes) => {
         if (typeof antes !== 'string' || !reT.test(antes)) return;
@@ -579,17 +586,79 @@
     }
     return out;
   }
+  // ------------------------------------------------ 🏷 Poner etiquetas (en «Reemplazar…»): la misma clave = valor en muchos a la vez
+  const ETQ_AWS = /^[\p{L}\p{Z}\p{N}_.:/=+\-@]*$/u;  // lo que AWS admite en claves y valores de etiquetas
+  const filaEtq = (k = '', v = '') => `<div class="etq-fila"><input class="e-k" value="${esc(k)}" placeholder="Clave" ${NOFILL}><span>=</span><input class="e-v" value="${esc(v)}" placeholder="Valor" ${NOFILL}><button type="button" class="enlace" data-e-quitar title="Quitar" aria-label="Quitar">×</button></div>`;
+  const panelEtiquetas = () => `<div id="ePanel" hidden>
+      <div id="eFilas">${(obligatorias().length ? obligatorias() : ['']).map(k => filaEtq(k)).join('')}</div>
+      <button type="button" class="enlace" id="eOtra">+ otra etiqueta</button>
+      <div class="reemplazar-donde"><span class="reemplazar-et">Dónde</span><span class="pildoras"><label class="pildora"><input type="radio" name="eModo" value="faltan" checked><span>Solo donde falta o está vacía</span></label><label class="pildora"><input type="radio" name="eModo" value="todos"><span>En todos (cambia el valor que tengan)</span></label></span></div>
+      <div id="eLista" class="reemplazar-lista"><p class="muted">Escribe la clave y el valor.</p></div>
+      <div class="acciones"><button type="button" class="primario" id="ePoner" disabled>Poner en el editor</button><button type="button" class="secundario" id="eNo">Cancelar</button></div></div>`;
+  function cambiosEtiquetas(pares, soloFaltan) {
+    const out = []; let sinPermiso = 0, sinSitio = 0;
+    for (const i of ambito().idx) {
+      const p = S.items[i]; if (!p || p.bloqueado || p.borrar) continue;
+      if (p.tags === null) { sinPermiso++; continue; }
+      const t = p.tags || {}, suyos = [];
+      for (const { k, v } of pares) {
+        const antes = Object.prototype.hasOwnProperty.call(t, k) ? String(t[k]) : null;
+        if ((soloFaltan && (antes || '').trim()) || antes === v) continue;
+        suyos.push({ i, k, antes, despues: v });
+      }
+      if (Object.keys(t).length + suyos.filter(c => c.antes === null).length > 50) { sinSitio++; continue; }  // SSM admite 50
+      out.push(...suyos);
+    }
+    return { out, sinPermiso, sinSitio };
+  }
+  function montarEtiquetas() {
+    let lista = [];
+    const pares = () => [...$('eFilas').querySelectorAll('.etq-fila')].map(f => ({ k: f.querySelector('.e-k').value.trim(), v: f.querySelector('.e-v').value.trim() })).filter(x => x.k && x.v);
+    const ver = () => {
+      const ps = pares(), mal = ps.filter(({ k, v }) => !ETQ_AWS.test(k) || !ETQ_AWS.test(v) || k.length > 128 || v.length > 256 || k.toLowerCase().startsWith('aws:'));
+      const repes = ps.map(x => x.k).filter((k, n, a) => a.indexOf(k) !== n);
+      const r = mal.length || repes.length || !ps.length ? null : cambiosEtiquetas(ps, $('ePanel').querySelector('[name=eModo]:checked').value === 'faltan');
+      lista = r ? r.out : [];
+      const notas = r ? [r.sinPermiso && `${r.sinPermiso} sin permiso para ver sus etiquetas`, r.sinSitio && `${r.sinSitio} ya con 50 etiquetas (lo máximo en SSM)`].filter(Boolean) : [];
+      $('eLista').innerHTML = !ps.length ? '<p class="muted">Escribe la clave y el valor.</p>'
+        : mal.length ? `<p class="error">«${esc(mal[0].k)} = ${esc(mal[0].v)}» no vale: AWS solo admite letras, números, espacios y _ . : / = + - @ (clave hasta 128, valor hasta 256 y sin «aws:» delante).</p>`
+        : repes.length ? `<p class="error">La clave «${esc(repes[0])}» está dos veces.</p>`
+        : !lista.length ? `<p class="muted">Nada que cambiar: ya la tienen todos${notas.length ? ' · ' + notas.join(' · ') : ''}.</p>`
+        : `<p class="reemplazar-cuenta">${lista.length} ${lista.length === 1 ? 'etiqueta' : 'etiquetas'} en ${new Set(lista.map(c => c.i)).size} parámetros · desmarca las que no quieras${notas.length ? ` · <span class="warn">${notas.join(' · ')}: no se tocan</span>` : ''}</p>
+          <table class="reemplazar-tabla"><thead><tr><th><input type="checkbox" id="eTodos" checked title="Todas" aria-label="Todas"></th><th>Parámetro</th><th>Etiqueta</th><th>Antes → después</th></tr></thead><tbody>${lista.map((c, n) => `<tr>
+          <td><input type="checkbox" data-e="${n}" checked aria-label="Poner esta etiqueta"></td><td><code>${esc(S.items[c.i].name)}</code></td><td><span class="cambio">${esc(c.k)}</span></td>
+          <td>${c.antes === null ? '<small class="muted">no la tiene</small>' : c.antes.trim() ? `<span class="reemplazar-antes">${esc(c.antes)}</span>` : '<small class="muted">vacía</small>'}<span class="reemplazar-despues">${esc(c.despues)}</span></td></tr>`).join('')}</tbody></table>`;
+      if ($('eTodos')) $('eTodos').addEventListener('change', e => $('eLista').querySelectorAll('[data-e]').forEach(x => { x.checked = e.target.checked; }));
+      $('ePoner').disabled = !lista.length;
+    };
+    $('ePanel').addEventListener('input', ver);
+    $('ePanel').addEventListener('change', ver);
+    $('ePanel').addEventListener('click', e => {
+      if (e.target.closest('[data-e-quitar]')) { e.target.closest('.etq-fila').remove(); if (!$('eFilas').children.length) $('eFilas').insertAdjacentHTML('beforeend', filaEtq()); ver(); }
+    });
+    $('eOtra').onclick = () => { $('eFilas').insertAdjacentHTML('beforeend', filaEtq()); $('eFilas').lastElementChild.querySelector('.e-k').focus(); };
+    $('eNo').onclick = modal.cerrar;
+    $('ePoner').onclick = () => {
+      const elegidas = lista.filter((_, n) => ($('eLista').querySelector(`[data-e="${n}"]`) || {}).checked);
+      for (const c of elegidas) S.items[c.i].tags = { ...(S.items[c.i].tags || {}), [c.k]: c.despues };
+      modal.cerrar(); pintar();
+      toast(`${elegidas.length} ${elegidas.length === 1 ? 'etiqueta puesta' : 'etiquetas puestas'} en el editor. Revisa y aplica.`);
+    };
+  }
+
   $('pReemplazar').onclick = () => {
     if (!S.ruta) return toast('Carga antes un grupo o una ruta.', true);
-    const n = visibles().length;
-    modal.abrir(`<h2>Reemplazar</h2><p>En los ${n} parámetros que ves ahora${$('pFiltro').value.trim() ? ' (con el filtro)' : ''}. Solo cambia el editor: después, «Revisar cambios» como siempre.</p>
+    modal.abrir(`<h2>Reemplazar</h2><span class="selector-vista r-modo" id="rModo" role="group" aria-label="Qué hacer"><button type="button" data-r-modo="reemplazar" aria-pressed="true">Buscar y reemplazar</button><button type="button" data-r-modo="etiquetas" aria-pressed="false">🏷 Poner etiquetas</button></span>
+      <p>En ${ambito().texto}. Solo cambia el editor: después, «Revisar cambios» como siempre.</p>
+      <div id="rPanel">
       <div class="reemplazar"><label class="campo">Buscar<input id="rBuscar" ${NOFILL}></label><label class="campo">Reemplazar por<input id="rPor" ${NOFILL}></label></div>
       <div class="reemplazar-donde"><span class="reemplazar-et">Buscar en</span><span class="pildoras">${[['rValor', 'Valores', true], ['rNombre', 'Nombres', false], ['rEtiquetas', 'Etiquetas', false], ['rDesc', 'Descripciones', false]]
         .map(([id, t, on]) => `<label class="pildora"><input type="checkbox" id="${id}" ${on ? 'checked' : ''}><span>${t}</span></label>`).join('')}</span>
         <label class="pildora sola"><input type="checkbox" id="rMayus"><span>Aa · distinguir mayúsculas</span></label></div>
       <p class="aviso reemplazar-aviso" id="rAvisoNombre" hidden>⚠ En SSM un parámetro no se renombra: se crea uno nuevo con el mismo valor, tipo, descripción y etiquetas, y se borra el viejo. Lo que lo lea por el nombre viejo dejará de encontrarlo, y su historial de versiones no pasa al nuevo. Si el nuevo no se puede crear, el viejo no se borra.</p>
       <div id="rLista" class="reemplazar-lista"><p class="muted">Escribe qué buscar.</p></div>
-      <div class="acciones"><button type="button" class="primario" id="rPoner" disabled>Poner en el editor</button><button type="button" class="secundario" id="rNo">Cancelar</button></div>`);
+      <div class="acciones"><button type="button" class="primario" id="rPoner" disabled>Poner en el editor</button><button type="button" class="secundario" id="rNo">Cancelar</button></div></div>
+      ${panelEtiquetas()}`);
     let lista = [];
     const donde = () => ({ valor: $('rValor').checked, nombre: $('rNombre').checked, etiquetas: $('rEtiquetas').checked, descripcion: $('rDesc').checked });
     const oculto = c => c.campo === 'valor' && S.items[c.i].type === 'SecureString' && !S.items[c.i].ver && !$('pMostrar').checked;
@@ -611,6 +680,14 @@
     ['rBuscar', 'rPor'].forEach(id => $(id).addEventListener('input', ver));
     ['rValor', 'rNombre', 'rEtiquetas', 'rDesc', 'rMayus'].forEach(id => $(id).addEventListener('change', ver));
     $('rNo').onclick = modal.cerrar; $('rBuscar').focus();
+    montarEtiquetas();
+    $('rModo').addEventListener('click', e => {
+      const b = e.target.closest('[data-r-modo]'); if (!b) return;
+      $('rModo').querySelectorAll('[data-r-modo]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      const etq = b.dataset.rModo === 'etiquetas';
+      $('rPanel').hidden = etq; $('ePanel').hidden = !etq;
+      (etq ? $('ePanel').querySelector('.e-v') || $('ePanel').querySelector('.e-k') : $('rBuscar')).focus();
+    });
     $('rPoner').onclick = () => {
       const elegidos = lista.filter((_, k) => ($('rLista').querySelector(`[data-r="${k}"]`) || {}).checked);
       const nombres = elegidos.filter(c => c.campo === 'nombre'), choques = [];
@@ -677,7 +754,8 @@
     const hacer = async (accion, extra = {}) => {
       const filas = elegidos();
       try {
-        const res = await post(`/api/papelera/${accion}`, { nombres: filas.map(f => f.nombre), ...extra });
+        const res = { resultados: [] };  // el servidor admite 200 por petición: en bloques
+        for (let k = 0; k < filas.length; k += 200) res.resultados.push(...(await post(`/api/papelera/${accion}`, { nombres: filas.slice(k, k + 200).map(f => f.nombre), ...extra })).resultados);
         const mal = res.resultados.filter(x => !x.ok);
         toast(mal.length ? `${res.resultados.length - mal.length} hechos; ${mal.length} no: ${mal.map(x => x.error).join(' · ')}` : accion === 'restaurar' ? `${filas.length} restaurados en su sitio` : `${filas.length} borrados para siempre`, !!mal.length);
         $('pPapelera').click();  // la papelera, otra vez de AWS

@@ -176,6 +176,12 @@ def test_plan_avisos_y_validaciones(cliente, ssm):
     for texto in ("vacío", "1024", "aws:", "Environment"):
         assert texto in errores
     assert any("aws" in e for e in plan[2]["errores"])
+    # Caracteres que AWS no admite en etiquetas (p. ej. «·», «;», «"»): error al revisar, no al aplicar
+    plan = cliente.post("/api/plan", json={"items": [item(p, tags={**TAGS, "Owner": "ana · equipo"}),
+                                                     item(p, tags={**TAGS, "Owner": "José Ñ - ops@x.es"})]}).get_json()["plan"]
+    assert "caracteres que AWS no admite" in " ".join(plan[0]["errores"]) and not plan[1]["errores"]
+    demasiados = cliente.post("/api/plan", json={"items": [item(p)] * 2001})
+    assert demasiados.status_code == 400 and "2000" in demasiados.get_json()["error"]  # antes decía «No hay cambios que revisar»
 
 
 # ---------------------------------------------------------------- aplicar
@@ -676,6 +682,18 @@ def test_renombrar_no_pasa_por_la_papelera(cliente, ssm):
                                            "confirmacion": CONFIRMA, "borrados": "1"}).get_json()
     assert all(x["ok"] for x in r["resultados"]), r
     assert not [n for n in ssm.params if n.startswith("/papelera/")]
+
+
+def test_mas_de_50_a_la_vez(cliente, ssm):
+    # DescribeParameters admite 50 nombres por filtro (en X Infra fallaba con 53 al revisar y al aplicar)
+    for i in range(53):
+        ssm.poner(f"/dev/masivo/p{i:02}", "v", tipo="String", tags=TAGS)
+    cargados = cargar(cliente, "/dev/masivo")
+    items = [item(p, accion="borrar", sin_papelera=True) for p in cargados.values()]
+    plan = cliente.post("/api/plan", json={"items": items}).get_json()["plan"]
+    assert len(plan) == 53 and not any(f["errores"] for f in plan)
+    r = cliente.post("/api/aplicar", json={"items": items, "confirmacion": CONFIRMA, "borrados": "53"}).get_json()["resultados"]
+    assert all(x["ok"] for x in r) and not [n for n in ssm.params if n.startswith("/dev/masivo/")]
 
 
 def test_papelera_con_sso_un_correo_y_rol_normal(cliente, ssm):

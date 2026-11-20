@@ -249,8 +249,10 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
 
     def items_de(datos):
         items = datos.get("items")
-        if not isinstance(items, list) or not items or len(items) > MAX_ITEMS:
+        if not isinstance(items, list) or not items:
             raise ErrorWeb("No hay cambios que revisar.")
+        if len(items) > MAX_ITEMS:
+            raise ErrorWeb(f"Son {len(items)} cambios: como mucho {MAX_ITEMS} a la vez. Aplica una parte y revisa el resto después.")
         items = [it for it in items if isinstance(it, dict)]
         for it in items:  # un parámetro no puede acabar en «/»: en los nuevos se quita en vez de dar error en AWS
             if it.get("accion") == "nuevo" and isinstance(it.get("name"), str):

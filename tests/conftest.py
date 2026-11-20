@@ -89,6 +89,9 @@ class FakeSSM:
     # -------------------------------------------------------------- API
     def describe_parameters(self, **kw):
         self._llamar("DescribeParameters", kw)
+        if any(len(f.get("Values", [])) > 50 for f in kw.get("ParameterFilters", [])):
+            raise error("ValidationException", "Value at 'parameterFilters.1.member.values' failed to satisfy constraint: "
+                        "Member must have length less than or equal to 50")
         if self.sin_describe:
             raise error("AccessDeniedException", "not authorized to perform ssm:DescribeParameters")
         nombres = sorted(self.params)
