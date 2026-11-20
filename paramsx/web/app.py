@@ -364,6 +364,12 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
             raise ErrorWeb("Escribe una ruta (o el nombre de un parámetro).")
         return jsonify(ssm_web.cargar(ssm(), ruta))
 
+    @app.post("/api/buscar-valor")
+    def api_buscar_valor():
+        datos = cuerpo()
+        texto = str(datos.get("texto") or "")[:500]
+        return jsonify(ssm_web.buscar_valor(ssm(), texto, str(datos.get("ruta") or "/")))
+
     @app.post("/api/plan")
     def api_plan():
         items = items_de(cuerpo())

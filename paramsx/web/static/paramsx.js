@@ -176,8 +176,46 @@
   });
   $('pSugerencias').addEventListener('mousemove', e => { const f = e.target.closest('.sug'); if (f && +f.dataset.i !== B.activa) marcarActiva(+f.dataset.i); });
 
+  // ------------------------------------------------ buscar por valor (cuando no recuerdas el parámetro pero sí el valor)
+  // En «Valor», la ruta (o el grupo y el entorno) dice dónde se busca: vacía o «/» es toda la cuenta
+  S.modo = 'ruta';
+  const RUTA_PH = $('pRuta').placeholder;
+  $('pModo').addEventListener('click', e => {
+    const b = e.target.closest('[data-modo]'); if (!b) return;
+    S.modo = b.dataset.modo;
+    $('pModo').querySelectorAll('[data-modo]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    $('pValor').hidden = S.modo !== 'valor';
+    $('pRuta').placeholder = S.modo === 'valor' ? 'Dónde: vacío o / es toda la cuenta; o /dev, /prod/mi-app…' : RUTA_PH;
+    (S.modo === 'valor' ? $('pValor') : $('pRuta')).focus();
+  });
+  $('pValor').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!$('pValor').value.trim()) return toast('Escribe lo que lleva el valor', true);
+    cargarEscrita();
+  });
+  async function buscarValor() {
+    const texto = $('pValor').value, ruta = '/' + $('pRuta').value.trim().replace(/^\/+|\/+$/g, '');
+    if (ruta.includes('*')) return toast('Al buscar por valor, la ruta va sin «*»: escribe la carpeta (o nada, para toda la cuenta)', true);
+    $('pEstado').textContent = `Leyendo los valores de ${ruta === '/' ? 'toda la cuenta' : ruta} para buscar «${texto}»…`; $('pLista').innerHTML = ''; $('pBarra').hidden = true;
+    try {
+      const r = await post('/api/buscar-valor', { texto, ruta });
+      S.ruta = S.cargada = r.ruta;
+      S.items = r.parametros.map(p => ({ ...p, tags: p.tags ? { ...p.tags } : null, orig: { ...p, tags: p.tags ? { ...p.tags } : null }, borrar: false, nuevo: false, ver: false }));
+      const n = S.items.length;
+      $('pEstado').innerHTML = `Valor con <b>«${esc(r.valor)}»</b> en <b>${r.ruta === '/' ? 'toda la cuenta' : esc(r.ruta)}</b> · ${n} ${n === 1 ? 'parámetro lo lleva' : 'parámetros lo llevan'} (de ${r.leidos} leídos)`
+        + (r.otras_mayusculas ? ' · <span class="warn">Ninguno lo lleva tal cual: estos lo llevan con otras mayúsculas</span>' : '')
+        + (r.sin_permiso ? ` · 🔒 ${r.sin_permiso} sin permiso para leerlos (no se han mirado)` : '')
+        + r.avisos.map(a => ` · <span class="warn">${esc(a)}</span>`).join('') + ' · <button type="button" class="enlace" data-recargar title="Volver a leer de AWS">↻ Recargar</button>';
+      $('pBarra').hidden = false; pintar();
+    } catch (e) {
+      $('pEstado').innerHTML = `<span class="error">${esc(e.message)}</span>`; S.items = []; S.ruta = '';
+    }
+  }
+
   // ------------------------------------------------ cargar y pintar
   async function cargar() {
+    if (S.modo === 'valor' && $('pValor').value.trim()) return buscarValor();
     let ruta = $('pRuta').value.trim();
     if (!ruta) return toast('Escribe una ruta o el nombre de un parámetro', true);
     if (!ruta.startsWith('/')) $('pRuta').value = ruta = '/' + ruta;  // la barra inicial, sola (uno sin carpeta también se encuentra así)

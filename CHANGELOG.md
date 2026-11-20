@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.15
+
+### Añadido
+
+- **Buscar por valor.** Junto al buscador, **Ruta | Valor**: con **Valor** escribes lo que lleva el valor (p. ej. `10.0.3.25`) y salen los parámetros que lo llevan, para cuando no recuerdas el nombre. La ruta (o un grupo y un entorno) dice dónde buscar; vacía es toda la cuenta. Busca el texto tal cual y, si no lo lleva ninguno así, enseña los que lo llevan con otras mayúsculas avisándolo. SSM no busca por valor: se leen los valores de la ruta (descifrados) y se filtran en local; lo que el rol no puede leer no se mira y se dice cuántos son. La papelera solo entra si se busca en ella.
+
 ## 2.5.14
 
 ### Corregido

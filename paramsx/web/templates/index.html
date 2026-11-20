@@ -19,7 +19,7 @@
 <main class="contenido">
   <!-- ============================================================ ParamsX -->
   <section class="vista" id="vParams">
-    <h1 class="titulo">Explora, carga un grupo o busca por ruta</h1>
+    <h1 class="titulo">Explora, carga un grupo o busca por ruta o por valor</h1>
     <div class="aviso" id="pAviso" hidden></div>
 
     <section class="tarjeta cargar">
@@ -30,10 +30,14 @@
         <label class="campo grupo-sel">Grupo<select id="pGrupo"><option value="">— Ruta libre —</option></select></label>
         <div class="entornos" id="pEntornos" role="group" aria-label="Entorno"></div>
       </div>
+      <div class="buscar-fila">
+      <span class="selector-vista" id="pModo" role="group" aria-label="Buscar en"><button type="button" data-modo="ruta" aria-pressed="true" title="Por el nombre: una ruta, un trozo del nombre o un patrón con *">Ruta</button><button type="button" data-modo="valor" aria-pressed="false" title="Por lo que lleva el valor, cuando no recuerdas el parámetro: se leen los valores de la ruta (o de toda la cuenta) y se filtran">Valor</button></span>
+      <input type="search" id="pValor" class="buscar-valor" hidden placeholder="Lo que lleva el valor: 10.0.3.25, mi-bucket…" aria-label="Texto que lleva el valor" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
       <div class="buscador" id="pBuscador">
         <span class="buscador-ico" aria-hidden="true">⌕</span>
         <input type="search" id="pRuta" placeholder="Busca por ruta o escríbela entera: rds, api, /dev/mi-app… o con *: /dev/rds/*/host" role="combobox" aria-expanded="false" aria-controls="pSugerencias" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other">
         <div class="sugerencias" id="pSugerencias" role="listbox" hidden></div>
+      </div>
       </div>
       <p class="estado" id="pEstado"></p>
     </section>

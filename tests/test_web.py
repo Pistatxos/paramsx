@@ -557,6 +557,60 @@ def test_patron_con_parametros_en_la_raiz_y_en_varios_entornos(cliente, ssm):
     assert r["patron"] == "/**/rds/*/host" and not r.get("cualquier_nivel")
 
 
+# ---------------------------------------------------------------- buscar por valor
+def buscar_valor(cliente, texto, ruta="/"):
+    return cliente.post("/api/buscar-valor", json={"texto": texto, "ruta": ruta}).get_json()
+
+
+def test_buscar_valor_en_toda_la_cuenta(cliente, ssm):
+    ssm.poner("/dev/app/db_host", "10.0.3.25", tipo="String")
+    ssm.poner("/prod/app/db_host", "10.0.9.9", tipo="String")
+    ssm.poner("/prod/otra/url", "jdbc://10.0.3.25:5432/x", tipo="SecureString")
+    ssm.poner("/prod/otra/clave", "nada", tipo="SecureString")
+    r = buscar_valor(cliente, "10.0.3.25")
+    assert [p["name"] for p in r["parametros"]] == ["/dev/app/db_host", "/prod/otra/url"]
+    assert (r["ruta"], r["valor"], r["leidos"], r["otras_mayusculas"]) == ("/", "10.0.3.25", 4, False)
+    assert r["parametros"][1]["value"] == "jdbc://10.0.3.25:5432/x"  # SecureString descifrado (la pantalla lo tapa)
+    assert all(kw["WithDecryption"] for kw in ssm.ops("GetParametersByPath"))
+
+
+def test_buscar_valor_solo_en_una_ruta(cliente, ssm):
+    ssm.poner("/dev/app/a", "mi-bucket", tipo="String")
+    ssm.poner("/prod/app/a", "mi-bucket", tipo="String")
+    r = buscar_valor(cliente, "mi-bucket", "prod/")  # sin barra inicial y con la final: se arregla
+    assert (r["ruta"], [p["name"] for p in r["parametros"]]) == ("/prod", ["/prod/app/a"])
+    assert {kw["Path"] for kw in ssm.ops("GetParametersByPath")} == {"/prod"}
+
+
+def test_buscar_valor_exacto_y_si_no_con_otras_mayusculas(cliente, ssm):
+    ssm.poner("/dev/a", "Mi-Bucket", tipo="String")
+    ssm.poner("/dev/b", "mi-bucket", tipo="String")
+    r = buscar_valor(cliente, "mi-bucket")
+    assert ([p["name"] for p in r["parametros"]], r["otras_mayusculas"]) == (["/dev/b"], False)  # tal cual: solo el que lo lleva así
+    r = buscar_valor(cliente, "MI-BUCKET")
+    assert ([p["name"] for p in r["parametros"]], r["otras_mayusculas"]) == (["/dev/a", "/dev/b"], True)
+    assert buscar_valor(cliente, "otro")["parametros"] == []
+
+
+def test_buscar_valor_sin_permiso_y_sin_papelera(cliente, ssm):
+    ssm.poner("/dev/a", "secreto-x", tipo="SecureString")
+    ssm.poner("/dev/b", "secreto-x", tipo="SecureString")
+    ssm.poner("/dev/c", "secreto-x", tipo="SecureString")
+    ssm.poner("/papelera/2026-11-01T10-00-00/dev/a", "secreto-x", tipo="SecureString")
+    ssm.kms_bloqueados.add("/dev/b")
+    ssm.iam_bloqueados.add("/dev/c")
+    r = buscar_valor(cliente, "secreto-x")
+    assert ([p["name"] for p in r["parametros"]], r["sin_permiso"], r["leidos"]) == (["/dev/a"], 2, 1)
+    r = buscar_valor(cliente, "secreto-x", "/papelera")  # en la papelera solo si se busca en ella
+    assert [p["name"] for p in r["parametros"]] == ["/papelera/2026-11-01T10-00-00/dev/a"]
+
+
+def test_buscar_valor_sin_texto(cliente, ssm):
+    r = cliente.post("/api/buscar-valor", json={"texto": "  ", "ruta": "/"})
+    assert r.status_code == 400 and "texto" in r.get_json()["error"]
+    assert not ssm.ops("GetParametersByPath")
+
+
 # ---------------------------------------------------------------- papelera
 
 def borrar(cliente, p, **extra):

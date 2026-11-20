@@ -204,20 +204,9 @@ def _uno(ssm, nombre):
     return meta, valores
 
 
-def cargar(ssm, ruta):
-    """Los parámetros de una ruta (recursivo) con valor, metadatos y etiquetas. Lo que el rol no
-    puede leer va con `bloqueado`. ParametrosError si no puede ni listar ni leer la ruta. Si no hay
-    nada debajo de la ruta: el parámetro con ese nombre (también sin «/», p. ej. «MiParametro») y,
-    si tampoco, los que llevan ese texto en el nombre («/common/rds/x» encuentra
-    «/prod/common/rds/x», «/dev/common/rds/x»…)."""
-    ruta = "/" + ruta.strip().strip("/") if ruta.strip().strip("/") else "/"
-    if "*" in ruta:
-        r = _por_patron(ssm, ruta)
-        if r["parametros"] or ruta.startswith("/**"):
-            return r
-        # Nada desde el principio: en cualquier nivel («/rds/*/host» encuentra «/dev/rds/cee/host»), como con una ruta que no existe
-        r = _por_patron(ssm, "/**" + ruta)
-        return {**r, "patron": ruta, "cualquier_nivel": True} if r["parametros"] else {**r, "patron": ruta}
+def _leer(ssm, ruta):
+    """(meta, valores, avisos) de todo lo que hay debajo de `ruta` (recursivo). meta es None si el rol no
+    puede listar; lo que no puede leer va con `bloqueado`. Fuera lo de la papelera, salvo si se lee ella."""
     avisos = []
     try:
         meta = describir(ssm, ruta)
@@ -247,6 +236,51 @@ def cargar(ssm, ruta):
     if not en_papelera(ruta + "/"):  # cargar «/» (o una ruta de fuera) no trae lo de la papelera
         meta = {n: m for n, m in meta.items() if not en_papelera(n)} if meta is not None else None
         valores = {n: v for n, v in valores.items() if not en_papelera(n)}
+    return meta, valores, avisos
+
+
+def buscar_valor(ssm, texto, ruta="/"):
+    """Los parámetros de `ruta` (recursivo; «/» es toda la cuenta) cuyo valor lleva `texto`. SSM no busca por
+    valor: se leen todos (descifrados) y se filtra aquí. Tal cual (distingue mayúsculas); si así no hay ninguno,
+    los que lo llevan con otras mayúsculas, avisándolo (`otras_mayusculas`). Lo que el rol no puede leer no se
+    mira: se cuenta en `sin_permiso`."""
+    if not str(texto or "").strip():
+        raise ParametrosError("Escribe el texto que lleva el valor.")
+    ruta = "/" + ruta.strip().strip("/") if (ruta or "").strip().strip("/") else "/"
+    meta, valores, avisos = _leer(ssm, ruta)
+    leidos = {n: v["value"] or "" for n, v in valores.items() if "value" in v}
+    sin_permiso = sum(1 for v in valores.values() if "bloqueado" in v)
+    nombres = sorted(n for n, v in leidos.items() if texto in v)
+    otras = False
+    if not nombres:
+        bajo = texto.lower()
+        nombres = sorted(n for n, v in leidos.items() if bajo in v.lower())
+        otras = bool(nombres)
+    if len(valores) >= MAX_LISTADO:
+        avisos.append(f"Bajo {ruta} hay más de {MAX_LISTADO}: solo se han mirado los {MAX_LISTADO} primeros; acota la ruta.")
+    if len(nombres) > MAX_CONTIENEN:
+        avisos.append(f"Lo llevan {len(nombres)}: se muestran los {MAX_CONTIENEN} primeros; acota la ruta o el texto.")
+        nombres = nombres[:MAX_CONTIENEN]
+    r = _montar(ssm, ruta, {n: meta[n] for n in nombres if n in meta} if meta is not None else None,
+                {n: valores[n] for n in nombres}, avisos)
+    return {**r, "valor": texto, "leidos": len(leidos), "sin_permiso": sin_permiso, "otras_mayusculas": otras}
+
+
+def cargar(ssm, ruta):
+    """Los parámetros de una ruta (recursivo) con valor, metadatos y etiquetas. Lo que el rol no
+    puede leer va con `bloqueado`. ParametrosError si no puede ni listar ni leer la ruta. Si no hay
+    nada debajo de la ruta: el parámetro con ese nombre (también sin «/», p. ej. «MiParametro») y,
+    si tampoco, los que llevan ese texto en el nombre («/common/rds/x» encuentra
+    «/prod/common/rds/x», «/dev/common/rds/x»…)."""
+    ruta = "/" + ruta.strip().strip("/") if ruta.strip().strip("/") else "/"
+    if "*" in ruta:
+        r = _por_patron(ssm, ruta)
+        if r["parametros"] or ruta.startswith("/**"):
+            return r
+        # Nada desde el principio: en cualquier nivel («/rds/*/host» encuentra «/dev/rds/cee/host»), como con una ruta que no existe
+        r = _por_patron(ssm, "/**" + ruta)
+        return {**r, "patron": ruta, "cualquier_nivel": True} if r["parametros"] else {**r, "patron": ruta}
+    meta, valores, avisos = _leer(ssm, ruta)
     if not meta and not valores and ruta != "/":
         # el nombre exacto; sin carpeta, AWS trata «/Nombre» y «Nombre» como el mismo: primero sin
         # la barra (su nombre de verdad)
