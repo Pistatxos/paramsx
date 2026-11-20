@@ -2,6 +2,7 @@
 (nombres de campos, obligatorios, longitudes), así que una petición mal formada falla aquí
 igual que fallaría en AWS."""
 import datetime
+import re
 import os
 import sys
 
@@ -18,6 +19,21 @@ CUENTA = "123456789012"
 
 def error(codigo, mensaje="", op="Op"):
     return ClientError({"Error": {"Code": codigo, "Message": mensaje or codigo}}, op)
+
+
+# Lo que valida AWS y botocore no (sus patrones): nombre, niveles y caracteres de las etiquetas
+NOMBRE_AWS = re.compile(r"^/?[A-Za-z0-9_.\-/]{1,2048}$")
+ETIQUETA_AWS = re.compile(r"^[\w\s.:/=+\-@]*$")
+
+
+def validar_aws(nombre=None, tags=()):
+    if nombre is not None and (not NOMBRE_AWS.match(nombre) or nombre.count("/") > 15):
+        raise error("ValidationException", f"Parameter name: can't be prefixed with ... or contain invalid characters / more than 15 levels: {nombre}")
+    for t in tags:
+        for campo in ("Key", "Value"):
+            if not ETIQUETA_AWS.match(t[campo]):
+                raise error("ValidationException", f"1 validation error detected: Value '{t[campo]}' at 'tags.1.member.{campo.lower()}' "
+                            "failed to satisfy constraint: Member must satisfy regular expression pattern: ^([\\p{L}\\p{Z}\\p{N}_.:/=+\\-@]*)$")
 
 
 class FakeSSM:
@@ -141,6 +157,7 @@ class FakeSSM:
     def put_parameter(self, **kw):
         self._llamar("PutParameter", kw)
         n = kw["Name"]
+        validar_aws(n, kw.get("Tags", []))
         if self.put_denegado and n.startswith(self.put_denegado):
             raise error("AccessDeniedException", "not authorized to perform: ssm:PutParameter")
         if self.too_many.get(n):
@@ -168,6 +185,7 @@ class FakeSSM:
 
     def add_tags_to_resource(self, **kw):
         self._llamar("AddTagsToResource", kw)
+        validar_aws(tags=kw["Tags"])
         self.params[kw["ResourceId"]]["tags"].update({t["Key"]: t["Value"] for t in kw["Tags"]})
         return {}
 
@@ -207,8 +225,11 @@ class FakeSSM:
 
 
 class FakeSTS:
+    def __init__(self, arn=None):
+        self.arn = arn or f"arn:aws:iam::{CUENTA}:user/mario"
+
     def get_caller_identity(self):
-        return {"Account": CUENTA, "Arn": f"arn:aws:iam::{CUENTA}:user/mario", "UserId": "AIDA"}
+        return {"Account": CUENTA, "Arn": self.arn, "UserId": "AIDA"}
 
 
 class FakeSesion:
@@ -216,7 +237,7 @@ class FakeSesion:
         self.ssm = ssm
 
     def client(self, servicio, region_name=None, config=None):
-        return self.ssm if servicio == "ssm" else FakeSTS()
+        return self.ssm if servicio == "ssm" else FakeSTS(getattr(self.ssm, "arn", None))
 
 
 @pytest.fixture

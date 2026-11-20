@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.5.16
+
+### Añadido
+
+- **Marcar varios.** **☑ Marcar** en la barra pone una casilla en cada parámetro y una franja con **Todos los que ves** (con el filtro, solo los filtrados), cuántos hay marcados y **🗑 Borrar los N**. Quedan para borrar como con «Borrar» uno a uno y se aplican con «Revisar cambios» (con la papelera, si la marcas); el mismo botón pasa a **No borrar** para deshacerlo. Las casillas solo salen con «Marcar» activado.
+
+### Corregido
+
+- **La papelera fallaba siempre** (desde la 2.5.14): la marca de la copia llevaba « · » (y «—» sin usuario), que AWS no admite en una etiqueta, así que con la casilla marcada no se borraba nada («Member must satisfy regular expression pattern»). Ahora es `<cuándo> <quién>`, solo con caracteres que AWS acepta. Las pruebas usan un SSM simulado que comprueba esos caracteres, como AWS.
+- **El usuario de AWS en la ruta de la copia**, junto a la fecha: `/papelera/2026-11-20T12-58-32_mespasa/dev/app/db`. Solo si no hay dudas: un usuario de IAM o una sesión de IAM Identity Center (SSO; si es un correo, lo de antes de la @). Con otros roles no se pone. Las copias anteriores se siguen leyendo y restaurando.
+- Un parámetro con más de 13 niveles no cabe en la papelera (SSM admite 15): antes se intentaba guardar con «~» en el nombre, que SSM tampoco admite. Ahora se dice y no se borra (se puede «Borrar sin copia»).
+
 ## 2.5.15
 
 ### Añadido

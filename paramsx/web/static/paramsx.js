@@ -256,11 +256,11 @@
     const tags = p.tags || {};
     const claves = [...new Set([...obligatorias(), ...Object.keys(tags)])];
     const lineas = (p.value || '').split('\n').length;
-    const cabecera = `<header><button type="button" class="plegar" data-plegar aria-expanded="${!!p.abierta}" title="Ver su información">▸</button>${p.nuevo ? `<input class="nombre-input" data-campo="name" value="${esc(p.name)}" placeholder="/ruta/nombre" ${NOFILL}>` : `<code class="nombre" title="${esc(p.name)}">${esc(p.name)}</code><button type="button" class="copiar" data-copiar title="Copiar el nombre" aria-label="Copiar el nombre">⧉</button>${!p.bloqueado && !p.borrar ? '<button type="button" class="copiar renombrar" data-renombrar title="Cambiar el nombre (en SSM: se crea uno nuevo y se borra este)" aria-label="Cambiar el nombre">✎</button>' : ''}`}
+    const cabecera = `<header>${p.bloqueado || p.nuevo ? '' : `<input type="checkbox" class="marca" data-marca ${p.marcado ? 'checked' : ''} aria-label="Marcar ${esc(p.name)}">`}<button type="button" class="plegar" data-plegar aria-expanded="${!!p.abierta}" title="Ver su información">▸</button>${p.nuevo ? `<input class="nombre-input" data-campo="name" value="${esc(p.name)}" placeholder="/ruta/nombre" ${NOFILL}>` : `<code class="nombre" title="${esc(p.name)}">${esc(p.name)}</code><button type="button" class="copiar" data-copiar title="Copiar el nombre" aria-label="Copiar el nombre">⧉</button>${!p.bloqueado && !p.borrar ? '<button type="button" class="copiar renombrar" data-renombrar title="Cambiar el nombre (en SSM: se crea uno nuevo y se borra este)" aria-label="Cambiar el nombre">✎</button>' : ''}`}
       <span class="chips">${p.nuevo ? '<span class="chip nuevo">nuevo</span>' : ''}${p.bloqueado ? '<span class="chip">🔒 solo lectura</span>' : ''}${p.version ? `<span class="chip" title="Versión en AWS">v${p.version}</span>` : ''}${p.tier === 'Advanced' ? '<span class="chip" title="Tier Advanced (de pago)">Advanced</span>' : ''}${p.kms_propia ? '<span class="chip" title="Cifrado con una clave KMS propia (se conserva al guardar)">KMS propia</span>' : ''}${p.modified ? `<span class="chip" title="Último cambio">${cuando(p.modified)}${p.user ? ' · ' + esc(quien(p.user)) : ''}</span>` : ''}<span class="cambios"></span></span>
       <span class="param-acciones">${!p.nuevo && !p.bloqueado ? '<button type="button" class="enlace" data-historial>Historial</button>' : ''}${!p.bloqueado ? `<button type="button" class="enlace ${p.borrar ? '' : 'peligro'}" data-borrar>${p.borrar ? 'No borrar' : p.nuevo ? 'Quitar' : 'Borrar'}</button>` : ''}</span></header>`;
     if (p.bloqueado) return `<article class="param bloqueado${p.abierta ? ' abierta' : ''}" data-i="${i}">${cabecera}<p class="bloqueado-motivo">🔒 ${esc(p.bloqueado)}</p></article>`;
-    return `<article class="param${p.borrar ? ' borrado' : ''}${p.nuevo ? ' nuevo' : ''}${p.abierta ? ' abierta' : ''}" data-i="${i}">${cabecera}
+    return `<article class="param${p.marcado ? ' marcado' : ''}${p.borrar ? ' borrado' : ''}${p.nuevo ? ' nuevo' : ''}${p.abierta ? ' abierta' : ''}" data-i="${i}">${cabecera}
       <div class="param-cuerpo"><div class="param-campos">
         <div class="fila-desc">
           <label class="campo">Descripción<input data-campo="description" value="${esc(p.description || '')}" maxlength="1024" ${NOFILL} ${ro || p.descripcion_legible === false ? 'disabled' : ''} ${p.descripcion_legible === false ? 'title="Tu rol no puede leer las descripciones (ssm:DescribeParameters)"' : ''}></label>
@@ -278,6 +278,43 @@
     $('pLista').innerHTML = S.items.map(tarjeta).join('') || '<p class="vacio">No hay parámetros en esta ruta. Con «+ Nuevo» puedes crear el primero.</p>';
     S.items.forEach((_, i) => marcar(i)); filtrar(); resumen();
   }
+  // ------------------------------------------------ marcar varios: solo con «☑ Marcar» activado; «Todos» son los que ves (con el filtro)
+  S.marcando = false;
+  const tarjetaDe = i => $('pLista').querySelector(`[data-i="${i}"]`);
+  const marcables = () => [...$('pLista').querySelectorAll('.param:not([hidden])')].map(c => +c.dataset.i).filter(i => S.items[i] && !S.items[i].bloqueado && !S.items[i].nuevo);
+  const marcados = () => S.items.map((p, i) => p.marcado ? i : -1).filter(i => i >= 0);
+  function ponerMarca(i, v) {
+    S.items[i].marcado = v;
+    const c = tarjetaDe(i); if (!c) return;
+    c.classList.toggle('marcado', v);
+    const m = c.querySelector('[data-marca]'); if (m) m.checked = v;
+  }
+  function pintarMarcas() {
+    if (!S.marcando) return;
+    const vis = marcables(), m = marcados(), nVis = vis.filter(i => S.items[i].marcado).length;
+    $('pTodosN').textContent = vis.length;
+    $('pTodos').checked = !!vis.length && nVis === vis.length;
+    $('pTodos').indeterminate = nVis > 0 && nVis < vis.length;
+    $('pMarcados').textContent = `${m.length} ${m.length === 1 ? 'marcado' : 'marcados'}`;
+    const yaBorrar = m.length && m.every(i => S.items[i].borrar);
+    $('pBorrarMarcados').disabled = !m.length;
+    $('pBorrarMarcados').textContent = !m.length ? '🗑 Borrar marcados' : yaBorrar ? `No borrar ${m.length === 1 ? 'el marcado' : `los ${m.length}`}` : `🗑 Borrar ${m.length === 1 ? 'el marcado' : `los ${m.length}`}`;
+  }
+  $('pMarcar').onclick = () => {
+    S.marcando = !S.marcando;
+    $('pMarcar').setAttribute('aria-pressed', String(S.marcando));
+    $('pLista').classList.toggle('marcando', S.marcando);
+    $('pMarcarBarra').hidden = !S.marcando;
+    if (!S.marcando) marcados().forEach(i => ponerMarca(i, false));  // al salir se quitan las marcas (lo marcado para borrar sigue)
+    pintarMarcas();
+  };
+  $('pTodos').onchange = () => { const v = $('pTodos').checked; marcables().forEach(i => ponerMarca(i, v)); pintarMarcas(); };
+  // Marca (o desmarca, si ya lo estaban todos) para borrar; se aplica, como siempre, con «Revisar cambios»
+  $('pBorrarMarcados').onclick = () => {
+    const m = marcados(), borrar = !m.every(i => S.items[i].borrar);
+    m.forEach(i => { S.items[i].borrar = borrar; repintarUna(i); });
+    pintarMarcas();
+  };
   function marcar(i) {
     const card = $('pLista').querySelector(`[data-i="${i}"]`); if (!card) return;
     const p = S.items[i], c = cambios(p);
@@ -297,6 +334,7 @@
       const p = S.items[card.dataset.i];
       card.hidden = !!q && !p.nuevo && ![p.name, p.description, ...Object.entries(p.tags || {}).flat()].join(' ').toLowerCase().includes(q);
     });
+    pintarMarcas();
   }
   $('pFiltro').addEventListener('input', filtrar);
   // Vista: Listado (por defecto) o Tarjetas (una línea por parámetro: nombre, copiarlo y ▸ para ver su información)
@@ -367,6 +405,7 @@
   $('pLista').addEventListener('click', e => {
     const card = e.target.closest('.param'); if (!card) return;
     const i = +card.dataset.i, p = S.items[i];
+    if (e.target.matches('[data-marca]')) { ponerMarca(i, e.target.checked); return pintarMarcas(); }
     if (e.target.closest('[data-renombrar]')) return pedirNombre(i);
     if (e.target.closest('[data-copiar]')) return navigator.clipboard.writeText(p.name).then(() => toast('Nombre copiado'), () => toast('No se pudo copiar', true));
     // Listado: ▸ (o el nombre) despliega su información
@@ -418,8 +457,8 @@
     let r;
     try { r = await post('/api/plan', { items }); } catch (e) { return modal.abrir(`<h2>Revisar cambios</h2><p class="error">${esc(e.message)}</p>`); }
     const validos = r.plan.filter(f => !f.errores.length), papelera = validos.filter(f => f.papelera).length;
-    // dónde quedaría la copia (la fecha la pone el servidor al borrar): /papelera/<fecha>/<nombre>
-    const ejemploPapelera = `/papelera/${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}/${(validos.find(f => f.papelera) || {}).name?.replace(/^\//, '') || ''}`;
+    // dónde quedaría la copia (la fecha la pone el servidor al borrar): /papelera/<fecha>[_<usuario de AWS>]/<nombre>
+    const ejemploPapelera = `/papelera/${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}${r.usuario_papelera ? '_' + r.usuario_papelera : ''}/${(validos.find(f => f.papelera) || {}).name?.replace(/^\//, '') || ''}`;
     const conflictos = r.plan.filter(f => f.conflicto).length;
     const frase = `APLICAR EN ${r.account}`;
     modal.abrir(`<h2>Revisar cambios</h2><p>Comparado con lo que hay ahora en AWS, en la cuenta <b>${esc(r.account)}</b> · ${esc(r.region_name)}.${r.plan.length - validos.length ? ` <span class="warn">${r.plan.length - validos.length} no se aplicarán (ver motivo).</span>` : ''}${conflictos ? ' <b class="error">Hay conflictos: recarga el grupo para ver lo que hay ahora.</b>' : ''}</p>

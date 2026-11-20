@@ -375,7 +375,8 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
         items = items_de(cuerpo())
         perfil, region = donde()
         return jsonify({"plan": ssm_web.plan(ssm(), items, config_activa()),
-                        **cuenta(perfil, region), "region_name": region})
+                        **cuenta(perfil, region), "region_name": region,
+                        "usuario_papelera": ssm_web.usuario_aws(cuenta(perfil, region)["arn"])})
 
     @app.post("/api/aplicar")
     def api_aplicar():
@@ -385,8 +386,9 @@ def crear_app(config_path=None, token=None, sesion_factory=None, perfiles_aws=No
         account = cuenta(perfil, region)["account"]
         if str(datos.get("confirmacion") or "").strip() != f"APLICAR EN {account}":
             raise ErrorWeb(f"Para aplicar escribe exactamente: APLICAR EN {account}")
-        por = cuenta(perfil, region)["arn"].rsplit("/", 1)[-1]  # quién borra, para la papelera
-        return jsonify({"resultados": ssm_web.aplicar(ssm(), items, config_activa(), por=por)})
+        arn = cuenta(perfil, region, forzar=True)["arn"]  # al aplicar, quién es ahora (las credenciales del perfil pueden cambiar)
+        por = arn.rsplit("/", 1)[-1]  # quién borra, para la marca de la papelera
+        return jsonify({"resultados": ssm_web.aplicar(ssm(), items, config_activa(), por=por, usuario=ssm_web.usuario_aws(arn))})
 
     @app.get("/api/papelera")
     def api_papelera():

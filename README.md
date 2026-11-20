@@ -52,7 +52,7 @@ Abre el navegador en `http://127.0.0.1:8765/?token=…` (si el puerto está ocup
 
 | Pantalla | Qué hace |
 |---|---|
-| **ParamsX** | Explora las rutas de la cuenta (solo nombres), carga un grupo × entorno o una ruta, y edita todos sus parámetros a la vez: valor, descripción, tipo y etiquetas. Con **Valor** busca los parámetros cuyo valor lleva un texto (en una ruta o en toda la cuenta), para cuando no recuerdas el nombre. |
+| **ParamsX** | Explora las rutas de la cuenta (solo nombres), carga un grupo × entorno o una ruta, y edita todos sus parámetros a la vez: valor, descripción, tipo y etiquetas. Con **Valor** busca los parámetros cuyo valor lleva un texto (en una ruta o en toda la cuenta), para cuando no recuerdas el nombre. **☑ Marcar** deja marcar varios (o todos los que ves) para borrarlos de una vez. |
 | **Revisar** | Compara con AWS **en ese momento**: si alguien ha cambiado un parámetro desde que lo cargaste, sale como conflicto y no se toca. Para aplicar hay que escribir `APLICAR EN <cuenta>`. |
 | **Historial** | Las versiones de AWS (hasta 100); «Usar esta versión» la pone en el editor. |
 | **Ajustes** | Perfil de AWS y región, entornos, perfiles, grupos (`parameter_list`) y etiquetas obligatorias. «Buscar en la cuenta» añade una carpeta como grupo detectando dónde va el entorno. |

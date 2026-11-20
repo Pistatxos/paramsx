@@ -327,3 +327,10 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .papelera-caja { background: #f4f8fb; border: 1px solid #dbe6ef; border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .papelera-caja small { color: var(--suave); font-size: 12px; line-height: 1.5; }
 .papelera-caja code { background: #fff; border: 1px solid var(--borde-suave); border-radius: 5px; padding: 1px 5px; word-break: normal; overflow-wrap: anywhere; }
+/* Marcar varios (☑ Marcar en la barra): casillas en cada parámetro y franja con «Todos» y «Borrar marcados» */
+.marca { display: none; width: 16px; height: 16px; margin: 0; flex: none; cursor: pointer; accent-color: var(--tinta); }
+.marcando .marca { display: inline-block; }
+.param.marcado > header { box-shadow: inset 4px 0 0 var(--tinta); }
+#pMarcar[aria-pressed="true"] { background: var(--tinta); color: #fff; border-color: var(--tinta); }
+.marcar-barra { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; padding: 8px 14px; border: 1px dashed var(--borde); border-radius: 8px; background: #fff; font-size: 13px; }
+.marcar-barra[hidden] { display: none; }

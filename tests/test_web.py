@@ -1,5 +1,6 @@
 """La versión web contra un SSM simulado: seguridad, carga con permisos parciales, plan,
 aplicar, historial y que ningún valor acabe en disco."""
+import re
 import logging
 import os
 
@@ -628,10 +629,10 @@ def test_borrar_guarda_copia_en_la_papelera_y_se_restaura_tal_cual(cliente, ssm)
     assert r["ok"], r
     assert "/dev/app/db" not in ssm.params
     copia = ssm.params[r["papelera"]]
-    assert r["papelera"].startswith("/papelera/") and r["papelera"].endswith("/dev/app/db")
+    assert re.fullmatch(r"/papelera/\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d_mario/dev/app/db", r["papelera"])  # el usuario de IAM, junto a la fecha
     assert (copia["value"], copia["description"], copia["key_id"]) == ("secreto", "Clave BD", clave)
     assert {k: v for k, v in copia["tags"].items() if not k.startswith("xinfra:")} == TAGS
-    assert copia["tags"]["xinfra:papelera"].count(" · ") == 1  # cuándo · quién, en una sola etiqueta
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ mario", copia["tags"]["xinfra:papelera"])  # cuándo y quién, en una sola etiqueta
     # no sale al cargar «/» ni al explorar; sí en la papelera, sin valores
     assert r["papelera"] not in cargar(cliente, "/")
     assert r["papelera"] not in cliente.get("/api/explorar").get_json()["nombres"]
@@ -675,6 +676,49 @@ def test_renombrar_no_pasa_por_la_papelera(cliente, ssm):
                                            "confirmacion": CONFIRMA, "borrados": "1"}).get_json()
     assert all(x["ok"] for x in r["resultados"]), r
     assert not [n for n in ssm.params if n.startswith("/papelera/")]
+
+
+def test_papelera_con_sso_un_correo_y_rol_normal(cliente, ssm):
+    # Antes, la marca llevaba « · » (y «—» sin usuario) y AWS la rechazaba: con la casilla marcada no se borraba nada
+    ssm.arn = f"arn:aws:sts::{CUENTA}:assumed-role/AWSReservedSSO_Admin_abc123/mespasa@stanalytics.es"
+    ssm.poner("/dev/app/url", "https://x", tipo="String", tags=TAGS)
+    r = borrar(cliente, cargar(cliente)["/dev/app/url"])
+    assert r["ok"], r
+    assert re.fullmatch(r"/papelera/[0-9T-]{19}_mespasa/dev/app/url", r["papelera"])
+    marca = ssm.params[r["papelera"]]["tags"]["xinfra:papelera"]
+    assert marca.endswith(" mespasa@stanalytics.es")
+    fila = cliente.get("/api/papelera").get_json()["filas"][0]
+    assert (fila["original"], fila["por"], fila["el"]) == ("/dev/app/url", "mespasa@stanalytics.es", marca.split(" ")[0])
+    assert cliente.post("/api/papelera/restaurar", json={"nombres": [r["papelera"]]}).get_json()["resultados"][0]["ok"]
+    # Un rol normal: el nombre de la sesión lo elige quien lo asume; ante la duda, sin usuario
+    ssm.arn = f"arn:aws:sts::{CUENTA}:assumed-role/Admin/botocore-session-123"
+    r = borrar(cliente, cargar(cliente)["/dev/app/url"])
+    assert r["ok"] and re.fullmatch(r"/papelera/[0-9T-]{19}/dev/app/url", r["papelera"]), r
+
+
+def test_usuario_aws_solo_sin_dudas():
+    from paramsx.web.ssm import usuario_aws
+    assert usuario_aws("arn:aws:iam::1:user/mespasa") == "mespasa"
+    assert usuario_aws("arn:aws:iam::1:user/equipo/devops/mespasa") == "mespasa"
+    assert usuario_aws("arn:aws:sts::1:assumed-role/AWSReservedSSO_Admin_x/mespasa@stanalytics.es") == "mespasa"
+    assert usuario_aws("arn:aws:sts::1:assumed-role/AWSReservedSSO_Admin_x/mespasa") == "mespasa"
+    for dudoso in ("arn:aws:sts::1:assumed-role/Admin/mespasa", "arn:aws:sts::1:assumed-role/Admin/botocore-session-1",
+                   "arn:aws:iam::1:root", "arn:aws:sts::1:federated-user/ana", "arn:aws:iam::1:user/ana+test",
+                   "arn:aws:sts::1:assumed-role/AWSReservedSSO_Admin_x/ana+x@empresa.es", "", None):
+        assert usuario_aws(dudoso) is None, dudoso
+
+
+def test_papelera_marcas_antiguas_y_nombres_demasiado_largos(cliente, ssm):
+    # Las de la 2.5.14 (si alguna llegó a guardarse) llevaban « · »: se siguen leyendo
+    ssm.poner("/papelera/2026-11-19T10-00-00/dev/a", "v", tipo="String")
+    ssm.params["/papelera/2026-11-19T10-00-00/dev/a"]["tags"] = {"xinfra:papelera": "2026-11-19T10:00:00Z · ana"}
+    fila = cliente.get("/api/papelera").get_json()["filas"][0]
+    assert (fila["original"], fila["por"], fila["el"]) == ("/dev/a", "ana", "2026-11-19T10:00:00Z")
+    # 14 niveles: con /papelera/<fecha> no caben (SSM admite 15) y no se borra
+    largo = "/" + "/".join(f"n{i}" for i in range(14))
+    ssm.poner(largo, "v", tipo="String", tags=TAGS)
+    r = borrar(cliente, cargar(cliente, largo)[largo])
+    assert not r["ok"] and r["sin_copia"] and "15" in r["error"] and largo in ssm.params
 
 
 def test_con_50_etiquetas_la_copia_y_la_restauracion_las_conservan_todas(cliente, ssm):

@@ -21,7 +21,7 @@ KMS_DEFECTO = ("alias/aws/ssm", "")
 # Papelera: lo que se borra se guarda antes, tal cual, bajo esta ruta del mismo SSM (mismo KMS y
 # mismos permisos de IAM: los valores nunca salen de AWS). Se recupera o se vacía desde 🗑 Papelera.
 PAPELERA = "/papelera"
-ETQ_PAPELERA_BASE = "xinfra:papelera"  # la marca de cada copia: «<cuándo> · <quién>»
+ETQ_PAPELERA_BASE = "xinfra:papelera"  # la marca de cada copia: «<cuándo> <quién>» (las de 2.5.14 llevaban « · »)
 ETQ_PAPELERA = ETQ_PAPELERA_BASE + "-"  # las de las primeras copias (de, por, el): se siguen leyendo
 
 
@@ -566,7 +566,7 @@ def _put(ssm, **kw):
             time.sleep(1.5 * (intento + 1))
 
 
-def aplicar(ssm, items, cfg, por=""):
+def aplicar(ssm, items, cfg, por="", usuario=None):
     """Aplica lo revisado. Se vuelve a comparar con AWS en el momento: lo que tenga errores
     (conflicto, sin permiso...) no se toca y el resto se aplica. Lo que se borra se guarda antes en
     la papelera (salvo los renombrados, que ya tienen su copia, y los que lleven «sin_papelera»: el
@@ -634,7 +634,7 @@ def aplicar(ssm, items, cfg, por=""):
     for b in [b for b in borrar if b["name"] not in copia_de and b["name"] not in sin_copia
               and not en_papelera(b["name"])]:
         try:
-            b["papelera"] = _a_papelera(ssm, b["name"], (ahora or meta or {}).get(b["name"], {}), por, cuando)
+            b["papelera"] = _a_papelera(ssm, b["name"], (ahora or meta or {}).get(b["name"], {}), por, cuando, usuario)
         except (ClientError, BotoCoreError, ParametrosError) as exc:  # sin copia completa no se borra
             detalle = exc if isinstance(exc, ParametrosError) else motivo(exc)
             b["error"] = f"No se ha podido guardar una copia completa en la papelera ({detalle}): no se ha borrado."
@@ -709,17 +709,39 @@ def _aplicar_uno(ssm, it, fila, m, accion):
 
 # ---------------------------------------------------------------- papelera
 
-def nombre_papelera(nombre, cuando):
-    """/papelera/<fecha>/<nombre original>. SSM admite 15 niveles: si no cabe, el original va en un
-    solo nivel (con «~»)."""
-    rel = "/" + nombre.lstrip("/")
-    base = f"{PAPELERA}/{cuando:%Y-%m-%dT%H-%M-%S}"
-    if (base + rel).count("/") > 15:
-        rel = "/" + nombre.strip("/").replace("/", "~")
-    return base + rel
+# Lo que AWS admite en el valor de una etiqueta (letras, números, espacios y _ . : / = + - @); lo demás se quita
+_NO_EN_ETIQUETA = re.compile(r"[^\w .:/=+\-@]")
 
 
-def _a_papelera(ssm, nombre, m, por, cuando):
+def usuario_aws(arn):
+    """El usuario de AWS de la sesión, solo si no hay dudas: el nombre de un usuario de IAM o el de una sesión de
+    IAM Identity Center (SSO; si es un correo, lo de antes de la @). En un rol normal el nombre de la sesión lo
+    elige quien lo asume (p. ej. «botocore-session-…»): None. También None si lleva algo que SSM no admite en
+    un nombre."""
+    partes = str(arn or "").split(":", 5)
+    if len(partes) < 6:
+        return None
+    recurso = partes[5]
+    if recurso.startswith("user/"):
+        nombre = recurso.rsplit("/", 1)[-1]
+    elif recurso.startswith("assumed-role/AWSReservedSSO_") and recurso.count("/") == 2:
+        nombre = recurso.rsplit("/", 1)[-1].split("@", 1)[0]
+    else:
+        return None
+    return nombre if re.fullmatch(r"[A-Za-z0-9_.\-]{1,64}", nombre) else None
+
+
+def nombre_papelera(nombre, cuando, usuario=None):
+    """/papelera/<fecha>[_<usuario de AWS>]/<nombre original>. El usuario va en el mismo nivel que la fecha: así
+    el original empieza siempre en el tercero (copias antiguas incluidas) y en IAM se acota igual. SSM admite 15
+    niveles: si no cabe, ParametrosError (sin copia no se borra)."""
+    destino = f"{PAPELERA}/{cuando:%Y-%m-%dT%H-%M-%S}" + (f"_{usuario}" if usuario else "") + "/" + nombre.lstrip("/")
+    if destino.count("/") > 15:
+        raise ParametrosError("tiene demasiados niveles para guardarlo en la papelera (SSM admite 15)")
+    return destino
+
+
+def _a_papelera(ssm, nombre, m, por, cuando, usuario=None):
     """Copia exacta (valor, tipo, descripción, todas las etiquetas, clave KMS, tier) en la papelera. Devuelve su
     nombre. Si no se pueden leer las etiquetas, ParametrosError: sin copia completa no se borra."""
     p = ssm.get_parameter(Name=nombre, WithDecryption=True)["Parameter"]
@@ -731,9 +753,9 @@ def _a_papelera(ssm, nombre, m, por, cuando):
                               if denegado(exc) else motivo(exc)) from None
     # Todas las suyas (SSM admite 50). La marca de la papelera (cuándo y quién) es una sola, y solo si cabe:
     # el nombre original ya va en la ruta de la copia
-    marca = f"{cuando:%Y-%m-%dT%H:%M:%SZ} · {por or '—'}"[:256]
+    marca = f"{cuando:%Y-%m-%dT%H:%M:%SZ} {_NO_EN_ETIQUETA.sub('', por or '')}".strip()[:256]
     etiquetas = tags + ([{"Key": ETQ_PAPELERA_BASE, "Value": marca}] if len(tags) < 50 else [])
-    destino = nombre_papelera(nombre, cuando)
+    destino = nombre_papelera(nombre, cuando, usuario)
     kw = {"Name": destino, "Value": p["Value"], "Type": p["Type"], "Overwrite": False}
     if etiquetas:
         kw["Tags"] = etiquetas
@@ -766,7 +788,8 @@ def papelera(ssm):
     tags = etiquetas(ssm, sorted(meta))
     def marca(n):  # (cuándo, quién): la marca de ahora o las de las primeras copias
         t = tags.get(n) or {}
-        el, _, por = t.get(ETQ_PAPELERA_BASE, "").partition(" · ")
+        v = t.get(ETQ_PAPELERA_BASE, "")
+        el, _, por = v.partition(" · " if " · " in v else " ")
         return el or t.get(ETQ_PAPELERA + "el", ""), por or t.get(ETQ_PAPELERA + "por", "")
     filas = [{"nombre": n, "original": _original(n, tags.get(n)), "por": marca(n)[1],
               "el": marca(n)[0] or m.get("modified", ""), "tipo": m.get("type"),
