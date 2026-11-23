@@ -341,3 +341,5 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 .etq-fila > span { color: var(--tenue); }
 #ePanel #eOtra { margin: 0 0 12px; }
 #ePanel[hidden], #rPanel[hidden] { display: none; }
+.sin-obligatorias { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.sin-obligatorias small { color: var(--suave); }

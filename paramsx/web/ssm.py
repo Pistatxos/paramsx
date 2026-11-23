@@ -451,7 +451,7 @@ def validar_item(it, cfg):
                 elif _NO_EN_ETIQUETA.search(k) or _NO_EN_ETIQUETA.search(str(v)):
                     errores.append(f"La etiqueta «{k}» lleva caracteres que AWS no admite (solo letras, números, "
                                    "espacios y _ . : / = + - @).")
-    if it.get("accion") == "nuevo" and cfg.get("tags_activas") and not cfg.get("obligatorias_vacias"):
+    if it.get("accion") == "nuevo" and cfg.get("tags_activas") and not cfg.get("obligatorias_vacias") and not it.get("sin_obligatorias"):
         faltan = [k for k in cfg.get("tags_obligatorias", []) if not str((tags or {}).get(k, "")).strip()]
         if faltan:
             errores.append(f"Faltan etiquetas obligatorias: {', '.join(faltan)}.")
@@ -529,6 +529,31 @@ def _revisar(ssm, items, cfg):
     return filas, meta or {}
 
 
+def diferencia_etiquetas(nuevas, vivas, orig=None):
+    """(poner, quitar, en_conflicto) entre lo del editor (`nuevas`), lo que hay ahora en AWS (`vivas`) y lo que había al
+    cargar (`orig`). Una etiqueta vacía es quitarla. Sin `orig` (el MCP o un cliente antiguo), como antes: lo que no venga
+    se quita. Con `orig`, solo se toca lo que cambió en el editor: una etiqueta que otro añadió o cambió después se
+    conserva, y si otro cambió la misma que tú, conflicto (no se pisa). Si ya está como quieres, no hace falta nada."""
+    nuevas = {k: str(v) for k, v in nuevas.items()}
+    if orig is None:
+        return ({k: v for k, v in nuevas.items() if v.strip() and vivas.get(k) != v},
+                [k for k in vivas if not nuevas.get(k, "").strip()], [])
+    valor = lambda d, k: d[k] if str(d.get(k, "")).strip() else ""  # vacía o ausente: lo mismo
+    orig = {k: str(v) for k, v in orig.items()}
+    poner, quitar, choques = {}, [], []
+    for k in sorted(set(nuevas) | set(orig)):
+        quiero, antes, ahora = valor(nuevas, k), valor(orig, k), valor(vivas, k)
+        if quiero == antes or quiero == ahora:  # no la has tocado, o ya está como quieres
+            continue
+        if ahora != antes:  # la has cambiado tú y también otro mientras tanto
+            choques.append(k)
+        elif quiero:
+            poner[k] = quiero
+        elif k in vivas:
+            quitar.append(k)
+    return poner, quitar, choques
+
+
 def _comparar(fila, it, vivo, meta, meta_legible, tags_antes):
     if it.get("value") != vivo.get("value"):
         fila["cambios"].append("valor")
@@ -541,11 +566,16 @@ def _comparar(fila, it, vivo, meta, meta_legible, tags_antes):
         fila["cambios"].append("descripción")
     nuevas = it.get("tags")
     if nuevas is not None and tags_antes is not None:
-        poner = {k: str(x) for k, x in nuevas.items() if str(x).strip() and tags_antes.get(k) != str(x)}
-        quitar = [k for k in tags_antes if not str(nuevas.get(k, "")).strip()]
+        orig = it.get("tags_orig") if isinstance(it.get("tags_orig"), dict) else None
+        poner, quitar, choques = diferencia_etiquetas(nuevas, tags_antes, orig)
         if poner or quitar:
             fila["cambios"].append("etiquetas")
             fila["tags_poner"], fila["tags_quitar"] = poner, quitar
+        if choques:
+            fila["conflicto"] = True
+            fila["errores"].append("Conflicto: alguien ha cambiado mientras tanto " + ", ".join(
+                f"la etiqueta «{k}» (ahora: «{tags_antes.get(k, '')}»)" if k in tags_antes else f"la etiqueta «{k}» (ya no está)"
+                for k in choques) + ". Recarga para verlo.")
     if not meta_legible and {"valor", "tipo"} & set(fila["cambios"]):
         fila["avisos"].append("Tu rol no puede leer la descripción: al guardar el valor, AWS "
                               "puede dejarla vacía.")

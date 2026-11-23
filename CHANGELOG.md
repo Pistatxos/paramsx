@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.18
+
+### Corregido
+
+- **Ya no se pierden etiquetas que otro añade mientras editas.** El editor mandaba todas las etiquetas y el servidor quitaba de AWS las que no venían: si alguien añadía una después de que cargaras, al aplicar cualquier cambio (aunque fuera solo el valor) se borraba, sin conflicto (cambiar solo etiquetas no sube la versión). Ahora el editor manda también las que había al cargar y solo se toca lo que has cambiado o quitado tú. Si otro ha cambiado o quitado **la misma** etiqueta que tú, sale como conflicto en «Revisar cambios» y no se pisa; si ya está como querías, no hace nada.
+
+### Añadido
+
+- En «Revisar cambios», los nuevos que solo fallan por las etiquetas obligatorias llevan **Crear sin las obligatorias que faltan**: solo para esos y esa vez (en Ajustes sigue «Permitir sin obligatorias» para siempre).
+
 ## 2.5.17
 
 ### Añadido

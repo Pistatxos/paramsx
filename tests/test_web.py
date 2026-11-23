@@ -222,6 +222,64 @@ def test_aplicar_solo_etiquetas_sin_put(cliente, ssm):
     assert ssm.params["/dev/app/a"]["version"] == 1
 
 
+def editar_tags(cliente, p, tags, **extra):
+    """Como el editor: manda las etiquetas que quiere y las que había al cargar (tags_orig)."""
+    it = item(p, tags=tags, tags_orig=p["tags"], **extra)
+    plan = cliente.post("/api/plan", json={"items": [it]}).get_json()["plan"][0]
+    r = cliente.post("/api/aplicar", json={"items": [it], "confirmacion": CONFIRMA}).get_json()["resultados"][0]
+    return plan, r
+
+
+def test_etiquetas_que_otro_anade_despues_se_conservan(cliente, ssm):
+    ssm.poner("/dev/app/a", "uno", tipo="String", tags={**TAGS, "Vieja": "1"})
+    p = cargar(cliente)["/dev/app/a"]
+    ssm.params["/dev/app/a"]["tags"]["Otro"] = "suyo"  # otro la añade después de cargar
+    # solo el valor: antes se quitaba «Otro» (no estaba en el editor)
+    plan, r = editar_tags(cliente, p, dict(p["tags"]), value="dos")
+    assert r["ok"] and "etiquetas" not in plan["cambios"], plan
+    assert ssm.params["/dev/app/a"]["tags"] == {**TAGS, "Vieja": "1", "Otro": "suyo"}
+    # alta y baja explícitas: se pone Owner y se quita Vieja; «Otro» sigue
+    p = cargar(cliente)["/dev/app/a"]
+    ssm.params["/dev/app/a"]["tags"]["Otro2"] = "x"
+    tags = {**p["tags"], "Owner": "ana", "Vieja": ""}
+    plan, r = editar_tags(cliente, p, tags)
+    assert r["ok"] and (plan["tags_poner"], plan["tags_quitar"]) == ({"Owner": "ana"}, ["Vieja"]), plan
+    assert ssm.params["/dev/app/a"]["tags"] == {**TAGS, "Otro": "suyo", "Otro2": "x", "Owner": "ana"}
+    assert ssm.params["/dev/app/a"]["version"] == 2  # solo etiquetas: sin versión nueva
+
+
+def test_etiquetas_misma_etiqueta_cambiada_por_dos(cliente, ssm):
+    ssm.poner("/dev/app/a", "uno", tipo="String", tags={**TAGS, "Owner": "ana"})
+    p = cargar(cliente)["/dev/app/a"]
+    ssm.params["/dev/app/a"]["tags"]["Owner"] = "luis"  # otro la cambia mientras tanto
+    plan, r = editar_tags(cliente, p, {**p["tags"], "Owner": "eva"})  # yo también, a otro valor: conflicto, no se pisa
+    assert plan["conflicto"] and "«Owner» (ahora: «luis»)" in " ".join(plan["errores"]) and not r["ok"]
+    assert ssm.params["/dev/app/a"]["tags"]["Owner"] == "luis"
+    plan, r = editar_tags(cliente, p, {k: v for k, v in p["tags"].items() if k != "Owner"})  # quitarla también choca
+    assert plan["conflicto"] and ssm.params["/dev/app/a"]["tags"]["Owner"] == "luis"
+    plan, r = editar_tags(cliente, p, {**p["tags"], "Owner": "luis"})  # al mismo valor que el otro: nada que hacer
+    assert not plan.get("conflicto") and plan["errores"] == ["Sin cambios respecto a lo que hay ahora en AWS."]
+    ssm.params["/dev/app/a"]["tags"].pop("Owner")  # otro la quita y yo la cambio: conflicto («ya no está»)
+    plan, _ = editar_tags(cliente, p, {**p["tags"], "Owner": "eva"})
+    assert plan["conflicto"] and "ya no está" in " ".join(plan["errores"])
+
+
+def test_etiquetas_sin_tags_orig_como_antes(cliente, ssm):
+    # El MCP o un cliente antiguo: lo que no venga se quita (lo que vale es lo que manda, recién leído)
+    ssm.poner("/dev/app/a", "uno", tipo="String", tags={**TAGS, "Otro": "x"})
+    p = cargar(cliente)["/dev/app/a"]
+    plan = cliente.post("/api/plan", json={"items": [item(p, tags=dict(TAGS))]}).get_json()["plan"][0]
+    assert plan["tags_quitar"] == ["Otro"]
+
+
+def test_crear_sin_las_obligatorias_solo_ese(cliente, ssm):
+    nuevo = {"name": "/dev/app/n", "accion": "nuevo", "value": "v", "type": "String", "description": "", "tags": {"Application": "x"}}
+    plan = cliente.post("/api/plan", json={"items": [nuevo]}).get_json()["plan"][0]
+    assert plan["errores"] == ["Faltan etiquetas obligatorias: Environment."]
+    r = cliente.post("/api/aplicar", json={"items": [{**nuevo, "sin_obligatorias": True}], "confirmacion": CONFIRMA}).get_json()["resultados"][0]
+    assert r["ok"] and ssm.params["/dev/app/n"]["tags"] == {"Application": "x"}
+
+
 def test_aplicar_nuevo_con_etiquetas(cliente, ssm):
     nuevo = {"name": "/dev/app/n", "accion": "nuevo", "value": "v", "type": "SecureString", "description": "",
              "tags": {**TAGS, "Owner": ""}}
