@@ -596,6 +596,54 @@
     }
     return out;
   }
+  // ------------------------------------------------ ⧉ Copiar (de los marcados o de lo que ves): nombre y valor, solo nombres o .env.
+  // Todo en el navegador: lo copiado no pasa por el servidor ni se guarda. Se copia lo que hay en el editor.
+  function textoCopiar(lista, formato) {
+    if (formato === 'nombres') return lista.map(p => p.name).join('\n') + '\n';
+    if (formato === 'env') {  // la clave: los tramos del nombre que no comparten todos (si es uno, el último)
+      const partes = lista.map(p => p.name.split('/').filter(Boolean));
+      let comun = 0;
+      while (partes.every(t => t.length - 1 > comun && t[comun] === partes[0][comun])) comun++;
+      const usadas = new Set();
+      return lista.map((p, n) => {
+        let k = partes[n].slice(comun).join('_').toUpperCase().replace(/[^A-Z0-9_]/g, '_').replace(/^(\d)/, '_$1');
+        while (usadas.has(k)) k += '_';
+        usadas.add(k);
+        let v = p.value ?? '';
+        if (esJson(v)) v = JSON.stringify(JSON.parse(v));
+        return `${k}=${/^[\w.\-\/:@+,]*$/.test(v) ? v : '"' + v.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n') + '"'}`;
+      }).join('\n') + '\n';
+    }
+    return lista.map(p => `${p.name}\n${esJson(p.value) ? JSON.stringify(JSON.parse(p.value), null, 2) : (p.value ?? '')}`).join('\n\n') + '\n';
+  }
+  $('pCopiar').onclick = () => {
+    if (!S.items.length) return toast('Carga antes un grupo o una ruta.', true);
+    const amb = ambito(), lista = amb.idx.map(i => S.items[i]).filter(p => p && !p.bloqueado && !p.nuevo);
+    const fuera = amb.idx.length - lista.length, secretos = lista.filter(p => p.type === 'SecureString').length;
+    if (!lista.length) return toast('Nada que copiar: los que hay no se pueden leer.', true);
+    modal.abrir(`<h2>Copiar</h2><p>De ${amb.texto}${fuera ? ` · ${fuera} sin poder leerlos o sin crear: no van` : ''}. Se copia lo que hay en el editor; no pasa por ningún servidor.</p>
+      <div class="reemplazar-donde"><span class="reemplazar-et">Formato</span><span class="pildoras">${[['bloques', 'Nombre y valor'], ['nombres', 'Solo nombres'], ['env', '.env']]
+        .map(([v, t], n) => `<label class="pildora"><input type="radio" name="cFormato" value="${v}" ${n ? '' : 'checked'}><span>${t}</span></label>`).join('')}</span></div>
+      <textarea id="cVista" class="copiar-vista" rows="12" readonly ${NOFILL}></textarea>
+      <p class="aviso" id="cAviso" hidden>⚠ Lleva ${secretos} ${secretos === 1 ? 'SecureString' : 'SecureString'} en claro: el portapapeles (y su historial, si usas un gestor) ${secretos === 1 ? 'lo guarda' : 'los guarda'}. Aquí se ven tapados.</p>
+      <div class="acciones"><button type="button" class="primario" id="cCopiar">⧉ Copiar</button><button type="button" class="secundario" id="cNo">Cancelar</button></div>`);
+    const formato = () => document.querySelector('[name=cFormato]:checked').value;
+    const oculto = p => p.type === 'SecureString' && !p.ver && !$('pMostrar').checked;
+    const ver = () => {
+      const f = formato(), claros = f === 'nombres' ? 0 : secretos;
+      $('cVista').value = textoCopiar(lista.map(p => oculto(p) ? { ...p, value: '••••••' } : p), f);
+      $('cAviso').hidden = !claros;
+      $('cCopiar').textContent = `⧉ Copiar ${lista.length}${claros ? ` (${claros} en claro)` : ''}`;
+    };
+    document.querySelectorAll('[name=cFormato]').forEach(x => x.addEventListener('change', ver));
+    ver();
+    $('cNo').onclick = modal.cerrar;
+    $('cCopiar').onclick = async () => {
+      try { await navigator.clipboard.writeText(textoCopiar(lista, formato())); } catch { return toast('El navegador no ha dejado copiar al portapapeles.', true); }
+      modal.cerrar(); toast(`${lista.length} ${lista.length === 1 ? 'copiado' : 'copiados'} al portapapeles`);
+    };
+  };
+
   // ------------------------------------------------ 🏷 Poner etiquetas (en «Reemplazar…»): la misma clave = valor en muchos a la vez
   const ETQ_AWS = /^[\p{L}\p{Z}\p{N}_.:/=+\-@]*$/u;  // lo que AWS admite en claves y valores de etiquetas
   const filaEtq = (k = '', v = '') => `<div class="etq-fila"><input class="e-k" value="${esc(k)}" placeholder="Clave" ${NOFILL}><span>=</span><input class="e-v" value="${esc(v)}" placeholder="Valor" ${NOFILL}><button type="button" class="enlace" data-e-quitar title="Quitar" aria-label="Quitar">×</button></div>`;

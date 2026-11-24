@@ -343,3 +343,5 @@ details.rama[open] > summary.exp-fila::before { transform: rotate(90deg); }
 #ePanel[hidden], #rPanel[hidden] { display: none; }
 .sin-obligatorias { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
 .sin-obligatorias small { color: var(--suave); }
+/* ⧉ Copiar */
+.copiar-vista { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 12.5px; white-space: pre; overflow: auto; margin: 4px 0 8px; }

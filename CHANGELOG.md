@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.19
+
+### Añadido
+
+- **⧉ Copiar…** en la barra: copia al portapapeles los marcados (con ☑ Marcar) o los que ves, en tres formatos: **Nombre y valor** (el nombre como título y el valor debajo; si es JSON, formateado), **Solo nombres** o **.env** (`CLAVE=valor`, la clave sale de los tramos del nombre que no comparten todos). Se copia lo que hay en el editor y todo pasa en el navegador. Si lleva SecureString, se ven tapados en la vista previa y el botón avisa de cuántos van en claro; los que no se pueden leer no van.
+
 ## 2.5.18
 
 ### Corregido
